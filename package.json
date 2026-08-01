@@ -1,0 +1,21 @@
+{
+  "name": "renewly",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Renewly — the agentic CFO for founders.",
+  "packageManager": "pnpm@11.10.0",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "format": "prettier --write \"**/*.{ts,tsx,mjs,md,json,css}\" --ignore-path .gitignore"
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,28 @@
+node_modules
+.pnpm-store
+.next
+out
+build
+dist
+.turbo
+*.tsbuildinfo
+next-env.d.ts
+
+# No environment files are tracked, templates included: .env.example carries
+# live sandbox credentials and is provisioned out of band.
+.env
+.env.*
+
+# Local PGlite data directory.
+.data
+
+# Landing page explorations. Local only.
+sample
+
+.DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.vercel
+coverage
