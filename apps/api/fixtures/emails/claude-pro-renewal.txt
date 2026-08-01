@@ -1,0 +1,27 @@
+From: Anthropic <billing@anthropic.com>
+To: founder@example.com
+Subject: Your Claude Pro subscription renews on August 12, 2026
+Date: Wed, 29 Jul 2026 09:14:22 +0000
+
+Hi there,
+
+This is a reminder that your Claude Pro plan renews automatically on
+August 12, 2026.
+
+Plan:              Claude Pro (individual)
+Billing period:    Monthly
+Amount:            $20.00 USD
+Payment method:    Visa ending 4242
+
+Total: $20.00
+
+Your card will be charged on the renewal date. If you would like to make
+changes, you can cancel by August 11, 2026 and you will keep access until the
+end of the current billing period.
+
+Manage your subscription: https://claude.ai/settings/billing
+
+Thanks for using Claude,
+The Anthropic team
+
+Anthropic PBC, 548 Market St, San Francisco, CA 94104

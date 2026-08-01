@@ -1,0 +1,10 @@
+{
+  "recipient": "renew+REPLACE_TOKEN@inbound.renewly.app",
+  "sender": "billing@anthropic.com",
+  "from": "Anthropic <billing@anthropic.com>",
+  "subject": "Your Claude Pro subscription renews on August 12, 2026",
+  "Message-Id": "<anthropic-2026-07-29-44120@anthropic.com>",
+  "body-plain": "Hi there,\n\nThis is a reminder that your Claude Pro plan renews automatically on August 12, 2026.\n\nPlan:              Claude Pro (individual)\nBilling period:    Monthly\nAmount:            $20.00 USD\nPayment method:    Visa ending 4242\n\nTotal: $20.00\n\nYour card will be charged on the renewal date. If you would like to make changes, you can cancel by August 11, 2026 and you will keep access until the end of the current billing period.\n\nManage your subscription: https://claude.ai/settings/billing\n\nThanks for using Claude,\nThe Anthropic team\n",
+  "timestamp": "1785438851",
+  "token": "mailgun-test-token"
+}

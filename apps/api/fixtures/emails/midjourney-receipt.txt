@@ -1,0 +1,27 @@
+From: Midjourney <no-reply@midjourney.com>
+To: founder@example.com
+Subject: Receipt for your Midjourney subscription
+Date: Sat, 05 Jul 2026 17:02:40 +0000
+
+Receipt from Midjourney Inc.
+
+Receipt number 2871-4402
+Paid July 5, 2026
+
+Description                              Qty     Amount
+Standard Plan - monthly                    1     $30.00
+--------------------------------------------------------
+Subtotal                                         $30.00
+Tax                                               $0.00
+Total                                            $30.00
+
+Charged to Visa ending 4242.
+
+Your subscription will renew on August 5, 2026 for $30.00 per month.
+
+Please note: starting with your September billing period the Standard Plan
+price is increasing to $36.00 per month.
+
+You can manage or cancel your plan at https://www.midjourney.com/account
+
+Midjourney Inc.

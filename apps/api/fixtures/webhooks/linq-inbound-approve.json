@@ -1,0 +1,10 @@
+{
+  "type": "message.received",
+  "data": {
+    "message_id": "linq_msg_8821347",
+    "conversation_id": "linq_thread_+15550100001",
+    "from": "+15550100001",
+    "text": "APPROVE",
+    "sent_at": "2026-07-30T18:42:11.000Z"
+  }
+}

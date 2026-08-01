@@ -1,0 +1,27 @@
+From: Figma Billing <billing@figma.com>
+To: renew+demo@inbound.renewly.app
+Subject: Your Figma Professional plan renews on 03 September 2026
+Date: Mon, 27 Jul 2026 08:31:04 +0000
+Message-ID: <fig-2026-07-27-88213@figma.com>
+
+Hello,
+
+Your Figma Professional plan for Northwind Labs renews on 03 September 2026.
+
+Plan:              Professional
+Full seats:        5
+Seats in use:      2
+Billing:           Monthly
+Amount per month:  $75.00 USD
+
+Total: $75.00
+
+You are being billed for 5 full seats. 3 seats have not been used in the last
+30 days. You can remove unused seats from the members page and we will credit
+the unused portion to your next invoice.
+
+To change your seat count, cancel before 27 August 2026.
+
+Manage seats: https://www.figma.com/settings
+
+Figma, Inc.

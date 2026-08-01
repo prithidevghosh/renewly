@@ -1,0 +1,35 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "102290129340398",
+      "changes": [
+        {
+          "field": "messages",
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "15550100999",
+              "phone_number_id": "106540352242922"
+            },
+            "contacts": [
+              { "profile": { "name": "Demo Founder" }, "wa_id": "15550100002" }
+            ],
+            "messages": [
+              {
+                "from": "15550100002",
+                "id": "wamid.HBgLMTU1NTAxMDAwMDIVAgASGBQzQTRCM0Q4",
+                "timestamp": "1785523331",
+                "type": "interactive",
+                "interactive": {
+                  "type": "button_reply",
+                  "button_reply": { "id": "APPROVE", "title": "Approve" }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

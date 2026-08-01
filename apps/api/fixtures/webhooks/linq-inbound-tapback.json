@@ -1,0 +1,11 @@
+{
+  "type": "message.reaction",
+  "data": {
+    "message_id": "linq_msg_8821399",
+    "conversation_id": "linq_thread_+15550100001",
+    "from": "+15550100001",
+    "text": "",
+    "tapback": "like",
+    "sent_at": "2026-07-30T18:43:02.000Z"
+  }
+}

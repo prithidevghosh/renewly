@@ -1,0 +1,19 @@
+From: Figma Billing <billing@figma.com>
+To: founder@example.com
+Subject: Figma Professional renews annually on 03 September 2026
+
+Hello,
+
+Your Figma Professional plan for Northwind Labs renews on 03 September 2026.
+
+Seats:            3 full seats
+Billing:          Annual
+Amount per year:  $432.00 USD
+
+Total due: $432.00
+
+To change your seat count, cancel before 27 August 2026.
+
+https://www.figma.com/settings
+
+Figma, Inc.
