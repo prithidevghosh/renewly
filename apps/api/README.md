@@ -43,8 +43,8 @@ SEED_DEMO_FLOW=true pnpm run seed
 | `pnpm run db:generate` | Generate a migration from `src/db/schema.ts` |
 | `pnpm run db:migrate` | Apply migrations (Postgres or PGlite) |
 | `pnpm run seed` | Demo user, workspace, simulator channel, merchant catalog |
-| `pnpm test` | Unit + integration (326 tests) |
-| `pnpm run test:e2e` | End-to-end journeys (89 tests) |
+| `pnpm test` | Unit + integration (448 tests) |
+| `pnpm run test:e2e` | End-to-end journeys (90 tests) |
 | `pnpm run lint` / `typecheck` | `tsc --noEmit` across src, tests and e2e |
 
 ---
@@ -138,6 +138,7 @@ entire journey runs with no keys at all.
 | iMessage | `LINQ_MODE` | accepts and records sends | Linq Partner API v3 + Standard Webhooks |
 | WhatsApp | `WHATSAPP_MODE` | accepts and records sends | Cloud API + `x-hub-signature-256` |
 | Inbound mail | `MAIL_MODE` | webhook accepted unsigned | verified per provider |
+| Outbound mail | `MAIL_OUTBOUND_MODE` | captured in an in-memory mailbox | Resend `POST /emails` |
 | Checkout | `CHECKOUT_ADAPTER_MODE` | validates and approves | signed POST to your test merchant |
 | LLM | `LLM_API_KEY` | heuristic parser + deterministic narrative | OpenAI-compatible |
 
@@ -169,7 +170,7 @@ API"*. Nothing reaches the ledger as `realized` until the user replies DONE, and
 records `automated: false`.
 
 **No third-party integration has been run against a live key.** Every outbound client — Prava, Linq,
-WhatsApp — is written to the vendor's published reference, and each one's request and response
+WhatsApp, Resend — is written to the vendor's published reference, and each one's request and response
 shapes are asserted against a stubbed `fetch` in its own test file. There are no credentials in this
 repo, so none of them has made a real call. If a field name has drifted, one adapter file is the fix.
 
@@ -179,6 +180,7 @@ repo, so none of them has made a real call. If a field name has drifted, one ada
 | Linq | [Partner API v3](https://docs.linqapp.com/api) | `channels/linq/adapter.test.ts` |
 | WhatsApp | [Cloud API](https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages) | `channels/whatsapp/adapter.test.ts` |
 | Mail webhooks | Mailgun / Svix signing docs | `intake/mail/verify.test.ts`, `lib/crypto.test.ts` |
+| Resend (outbound) | [Send email](https://resend.com/docs/api-reference/emails/send-email) | `lib/mailer.test.ts` |
 | LLM | [OpenAI structured outputs](https://platform.openai.com/docs/guides/structured-outputs) | exercised via the heuristic fallback |
 
 ---
@@ -291,6 +293,8 @@ string. Timestamps are ISO 8601 UTC. Lists take `?cursor=&limit=`.
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/health`, `/v1/demo/status` | Liveness; which modes are configured (booleans only) |
+| `POST` | `/v1/waitlist` | Public pre-launch signup; stores the address and sends the welcome mail |
+| `POST` | `/v1/contact` | Public contact form; mails the message to `CONTACT_NOTIFY_TO` |
 | `POST` | `/v1/auth/signup`, `/login`, `/logout` | Credentials |
 | `GET` | `/v1/me` | User, workspace, settings |
 | `GET` `PATCH` | `/v1/settings` | Budget, ceiling, approval mode, quiet hours, primary channel |
@@ -323,6 +327,63 @@ string. Timestamps are ISO 8601 UTC. Lists take `?cursor=&limit=`.
 | `GET` | `/v1/savings`, `/v1/savings/summary` | Identified and realized |
 | `GET` | `/v1/audit?type=&limit=&cursor=` | Append-only audit log |
 
+### Waitlist
+
+The one public, pre-account endpoint. **Success means the whole loop finished** — row written,
+position assigned, welcome mail delivered, internal notice delivered. Any step short of that is an
+error rather than a partial success, so the form can never say "you're in" when nobody was mailed.
+
+```bash
+curl -s -X POST localhost:4000/v1/waitlist -H 'content-type: application/json' \
+  -d '{"email":"founder@example.com","name":"Ada Lovelace","source":"landing-hero"}'
+```
+
+```json
+{ "waitlist": { "email": "founder@example.com", "position": 1, "alreadyJoined": false,
+                "mail": "sent", "joinedAt": "2026-01-01T00:00:00.000Z" } }
+```
+
+- `201` for a new address, `200` when it was already on the list. A repeat submission keeps the
+  original place in line and does not send a second mail.
+- A mail that cannot be sent is `502 CHANNEL_SEND_FAILED`. The row is **kept**, because deleting it
+  would turn a provider outage into a lost signup — but the response is still a failure.
+- The row records which of the two mails landed (`welcome_sent_at`, `notice_sent_at`), so
+  re-submitting a failed address sends only what is still owed. A retry resumes the loop; it never
+  mails anyone twice.
+- The internal notice goes to `WAITLIST_NOTIFY_TO`, with `Reply-To` set to the person who signed up.
+- Rate limited to 20/minute per IP, on top of the global ceiling. `name`, `source` and `referrer`
+  are optional; `referrer` falls back to the request's `Referer` header.
+- In `MAIL_OUTBOUND_MODE=mock` nothing leaves the process — read what would have been sent with
+  `readMailbox()` from `src/lib/mailer.ts`.
+- Every step is logged against the request id: the raw body as it arrived, the parsed input, the
+  row, each mail send, the provider's verbatim response, and the exact body being returned. In
+  development those lines are colourised by `pino-pretty`; elsewhere they stay JSON.
+
+### Contact
+
+The waitlist's simpler sibling: public, unauthenticated, and mail-only. **Nothing is stored** —
+the message is the mail and the inbox is the store, so there is no table, no id and no dedupe.
+
+```bash
+curl -s -X POST localhost:4000/v1/contact -H 'content-type: application/json' \
+  -d '{"name":"Ada Lovelace","email":"ada@example.com","message":"We renew Datadog in August."}'
+```
+
+```json
+{ "contact": { "email": "ada@example.com", "sentAt": "2026-01-01T00:00:00.000Z" } }
+```
+
+- `201` once the provider has accepted the mail. All three fields are required; `message` is capped
+  at 5000 characters and the address is lowercased before it is used as `Reply-To`.
+- A mail that cannot be sent is `502 CHANNEL_SEND_FAILED`. Since nothing was persisted, the caller
+  can simply resubmit — the form must never say "message sent" when it was not.
+- The message goes to `CONTACT_NOTIFY_TO`, with `Reply-To` set to the sender, so replying from the
+  inbox answers them directly.
+- Rate limited to 10/minute per IP, tighter than the waitlist because every accepted request sends
+  a mail.
+- In `MAIL_OUTBOUND_MODE=mock` nothing leaves the process — read what would have been sent with
+  `readMailbox()` from `src/lib/mailer.ts`.
+
 ### Errors
 
 ```json
@@ -346,7 +407,7 @@ string. Timestamps are ISO 8601 UTC. Lists take `?cursor=&limit=`.
 
 ## Database
 
-The schema is PostgreSQL — `jsonb`, `numeric`, native enums, 23 tables. `DATABASE_URL` picks the
+The schema is PostgreSQL — `jsonb`, `numeric`, native enums, 24 tables. `DATABASE_URL` picks the
 driver, and **the same generated migrations run on all three**:
 
 | `DATABASE_URL` | Driver | Use |
@@ -365,10 +426,12 @@ SQLite and quietly changing semantics. For real Postgres: `docker compose up -d`
 ```
 src/
   index.ts · app.ts · env.ts
-  db/                    schema (23 tables), dual-driver client, migrator
+  db/                    schema (24 tables), dual-driver client, migrator
   lib/                   money · errors · logger · id · llm · http · crypto · idempotency
   middleware/            auth · errorHandler · requestId · rateLimit · securityHeaders
   modules/
+    waitlist/                       public pre-launch signup + welcome mail
+    contact/                        public contact form, mail-only, stores nothing
     auth/ workspaces/ settings/     identity and policy
     merchants/                      canonical vendor graph, aliases, cancel URLs
     subscriptions/                  inventory, seats, confidence gate
@@ -410,8 +473,8 @@ ignore quiet hours: the user is mid-flow.
 ## Testing
 
 ```bash
-pnpm test        # 326 unit + integration
-pnpm run test:e2e   # 89 across 8 journeys
+pnpm test        # 448 unit + integration
+pnpm run test:e2e   # 90 across 8 journeys
 ```
 
 Every test file boots its own in-memory Postgres via PGlite and applies the real migrations, so
@@ -426,7 +489,8 @@ hashing, idempotency under concurrency.
 
 **Integration** — auth and workspace isolation, subscriptions and the confidence gate, email/file/
 CSV intake, decisions and supersession, the pay path, channel connect and inbound intents, expiry,
-cancel and rightsize, identified/realized ledger, audit chains.
+cancel and rightsize, identified/realized ledger, audit chains, waitlist signup including
+duplicate submission, a failing mail provider and a retry that resumes the loop.
 
 **E2E journeys**
 
@@ -456,6 +520,9 @@ See `.env.example`. Everything has a working default except `AUTH_SECRET` in pro
 | `LINQ_MODE` `LINQ_API_KEY` `LINQ_WEBHOOK_SECRET` `LINQ_FROM_NUMBER` `LINQ_BASE_URL` | iMessage; `LINQ_FROM_NUMBER` is a provisioned line and is required to start a chat |
 | `WHATSAPP_MODE` `WHATSAPP_TOKEN` `WHATSAPP_PHONE_NUMBER_ID` `WHATSAPP_VERIFY_TOKEN` `WHATSAPP_APP_SECRET` `WHATSAPP_GRAPH_VERSION` | WhatsApp Cloud API; graph versions expire ~2 years after release |
 | `MAIL_MODE` `MAIL_WEBHOOK_SECRET` `MAIL_INBOUND_DOMAIN` | Inbound mail; the secret's meaning depends on the provider (see Webhook setup) |
+| `MAIL_OUTBOUND_MODE` `MAIL_OUTBOUND_API_KEY` `MAIL_FROM` `MAIL_REPLY_TO` | Outbound mail via Resend; `mock` captures instead of sending |
+| `WAITLIST_NOTIFY_TO` | Where the internal waitlist notice goes; a signup fails if it cannot be delivered |
+| `CONTACT_NOTIFY_TO` | Where contact-form messages go, with `Reply-To` set to the sender |
 | `CHECKOUT_ADAPTER_MODE` `CHECKOUT_ADAPTER_URL` `CHECKOUT_ADAPTER_SECRET` | Merchant settlement |
 | `WORKER_ENABLED` `WORKER_POLL_INTERVAL_MS` `APPROVAL_TTL_MINUTES` | Worker loop |
 | `SEED_SAMPLE_SUBS` `SEED_DEMO_FLOW` | Seed behaviour, both off by default |
