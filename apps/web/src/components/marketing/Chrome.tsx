@@ -29,7 +29,9 @@ export function Nav() {
     <header
       className={cx(
         "fixed inset-x-0 top-0 z-50 transition-all duration-[var(--dur-base)]",
-        scrolled ? "border-b border-rule bg-paper/85 backdrop-blur-md" : "border-b border-transparent",
+        scrolled
+          ? "border-b border-rule bg-paper/85 backdrop-blur-md"
+          : "border-b border-transparent",
       )}
     >
       <div className="shell-x mx-auto flex h-16 w-full max-w-[1240px] items-center justify-between">
@@ -204,12 +206,7 @@ export function SectionHead({
 }) {
   return (
     <div className={cx("max-w-[46rem]", align === "center" && "mx-auto text-center")}>
-      <p
-        className={cx(
-          "flex items-center gap-2.5 label",
-          align === "center" && "justify-center",
-        )}
-      >
+      <p className={cx("flex items-center gap-2.5 label", align === "center" && "justify-center")}>
         <span className="h-px w-6 bg-forest/60" aria-hidden />
         {eyebrow}
       </p>
@@ -229,18 +226,40 @@ export function Footer() {
           <div>
             <Wordmark size={24} />
             <p className="mt-4 max-w-[34ch] text-body-s text-ink-3">
-              The agentic CFO for founders. Catches the renewal, completes the action, proves the
-              saving.
+              The agentic control plane for recurring spend. Every decision executed under your
+              authority, with proof.
             </p>
-            <p className="mt-5 label">
-              Prototype · all data simulated
-            </p>
+            <p className="mt-5 label">Prototype · all data simulated</p>
           </div>
 
           {[
-            { title: "Product", links: [["The loop", "#loop"], ["Trust", "#trust"], ["Pricing", "#pricing"], ["Agent", "/agent"]] },
-            { title: "Company", links: [["About", "#"], ["Careers", "#"], ["Blog", "#"], ["Contact", "#"]] },
-            { title: "Legal", links: [["Privacy", "#"], ["Terms", "#"], ["Security", "#"], ["Status", "#"]] },
+            {
+              title: "Product",
+              links: [
+                ["The loop", "#loop"],
+                ["Trust", "#trust"],
+                ["Pricing", "#pricing"],
+                ["Agent", "/agent"],
+              ],
+            },
+            {
+              title: "Company",
+              links: [
+                ["About", "#"],
+                ["Careers", "#"],
+                ["Blog", "#"],
+                ["Contact", "#"],
+              ],
+            },
+            {
+              title: "Legal",
+              links: [
+                ["Privacy", "#"],
+                ["Terms", "#"],
+                ["Security", "#"],
+                ["Status", "#"],
+              ],
+            },
           ].map((col) => (
             <div key={col.title}>
               <p className="label">{col.title}</p>
@@ -261,9 +280,7 @@ export function Footer() {
         </div>
 
         <div className="mt-14 flex flex-col gap-3 border-t border-rule pt-6 sm:flex-row sm:items-center sm:justify-between">
-          <p className="label">
-            © {new Date().getUTCFullYear()} Renewly
-          </p>
+          <p className="label">© {new Date().getUTCFullYear()} Renewly</p>
           <p className="max-w-[62ch] text-caption text-ink-4">
             Demonstration build. No real vendors are contacted, no accounts are connected, and no
             money moves anywhere in this application.

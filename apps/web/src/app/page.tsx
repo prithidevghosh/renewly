@@ -6,6 +6,8 @@ import { Chart } from "@/components/site/Chart";
 import { Thread } from "@/components/site/Thread";
 import { Logo, VENDORS } from "@/components/site/brand-marks";
 import { Artwork } from "@/components/site/Artwork";
+import { WaitlistButton } from "@/components/site/WaitlistButton";
+import { ContactButton } from "@/components/site/ContactButton";
 
 /**
  * Renewly — the landing page.
@@ -15,10 +17,10 @@ import { Artwork } from "@/components/site/Artwork";
  * you no longer have to give. So the page is paced like the picture — slow,
  * warm, spacious, almost empty.
  *
- * Copy leads with the wedge: the category has solved detection and
- * notification, and Renewly's difference is that the decision arrives in your
- * messages and then *executes and pays*. Nothing here should ever describe it
- * as a cancellation tool or a tracker.
+ * Copy leads with the category ambition: Renewly is the agentic control plane
+ * for recurring spend. Renewals are the first high-intent workflow, not the
+ * boundary of the product. Nothing here should describe it as a cancellation
+ * tool, tracker, or advice-only assistant.
  *
  * Two numbers carry the argument: identified (what we found) and realized
  * (what actually left the bill). Only the second one is the claim.
@@ -28,9 +30,9 @@ import { Artwork } from "@/components/site/Artwork";
  */
 
 export const metadata: Metadata = {
-  title: "Renewly — renewals that finish themselves",
+  title: { absolute: "Renewly — recurring spend, on purpose" },
   description:
-    "Renewly is the messaging-native renewal agent. Forward the email, approve the move with Face ID, and a one-time card settles the payment. Receipt in the same thread.",
+    "Renewly is the agentic control plane for recurring spend: it perceives every commitment, decides the right move, acts within your authority, and proves the outcome.",
 };
 
 const Arrow = () => (
@@ -48,54 +50,56 @@ const Arrow = () => (
 const MOVES = [
   {
     no: "01",
-    title: "It detects",
-    body: "Renewal mail, vendor, seats, amount and date — reconciled against the card line.",
+    title: "It perceives",
+    body: "Mail, cards, books and vendor state become one living map of recurring commitments.",
   },
   {
     no: "02",
-    title: "It proposes",
-    body: "One message before the charge, with the exact move and dollars kept.",
+    title: "It decides",
+    body: "Renew, right-size, change terms, cancel or switch — judged against cost, usage and policy.",
   },
   {
     no: "03",
-    title: "You approve",
-    body: "Face ID once, scoped to that vendor and that amount.",
+    title: "You authorize",
+    body: "Approve one move, or define an envelope for routine actions. You set the law.",
     yours: true,
   },
   {
     no: "04",
     title: "It executes",
-    body: "It settles approved payments; for manual changes, it returns the exact steps.",
+    body: "Scoped payments and vendor runbooks carry the approved outcome into the real world.",
   },
   {
     no: "05",
     title: "It proves",
-    body: "Confirmation, matched charge and an accountant-ready receipt.",
+    body: "Every change closes with confirmation, reconciliation and a finance-grade trail.",
   },
 ];
 
 const FIGURES = [
   {
     step: "01",
-    kind: "Annual run-rate",
-    count: "8633.88",
-    prefix: "$",
-    label: "Recurring spend a year, rebuilt from renewal mail and card lines.",
+    kind: "Commitments mapped",
+    count: "34",
+    prefix: "",
+    dec: "0",
+    label: "Every recurring tool and service, reconciled across mail, cards and books.",
   },
   {
     step: "02",
-    kind: "Opportunity found",
-    count: "3078",
-    prefix: "$",
+    kind: "Decisions due",
+    count: "7",
+    prefix: "",
     dec: "0",
-    label: "Identified — idle seats, monthly billing, duplicate tools.",
+    label: "Renew, change terms, release, cancel or stop in the next thirty days.",
   },
   {
     step: "03",
-    kind: "Receipt-verified",
-    count: "1235.88",
-    prefix: "$",
-    label: "Realized — executed and paid. Not a suggestion in a dashboard.",
+    kind: "Inside policy",
+    count: "3",
+    prefix: "",
+    dec: "0",
+    label: "Actions already covered by a mandate you can inspect and revoke.",
     saved: true,
   },
 ];
@@ -112,14 +116,14 @@ export default function LandingPage() {
           </a>
           <span className="spacer" />
           <a className="quiet" href="#how">
-            How it works
+            The control loop
           </a>
           <a className="quiet" href="#thread">
             In the thread
           </a>
-          <a className="btn" href="/onboarding">
-            Start free
-          </a>
+          <WaitlistButton source="landing-nav" className="btn">
+            Join the waitlist
+          </WaitlistButton>
         </div>
       </header>
 
@@ -127,27 +131,28 @@ export default function LandingPage() {
       <section className="open" id="top">
         <Artwork scene="hero" />
         <div className="shell wide open-in">
-          <p className="hero-kicker up">The messaging-native renewal agent</p>
+          <p className="hero-kicker up">The agentic control plane for recurring spend</p>
           <h1 data-words>
-            Your next renewal
+            Every recurring dollar
             <br />
-            <em>can finish in a text.</em>
+            <em>leaves on purpose.</em>
           </h1>
           <p className="lede up" data-d="180">
-            Forward the email. Renewly finds the move and texts it to you. Approve with Face ID; a
-            one-time card settles the payment, and the receipt returns to the same thread.
+            Renewly watches every recurring commitment, decides what should continue, and asks once
+            when you&rsquo;re needed. Then it carries the outcome through — from a scoped payment or
+            vendor change to finance-grade proof.
           </p>
           <div className="row up" data-d="320">
-            <a className="btn pale" href="/onboarding">
-              Forward your first renewal
+            <WaitlistButton source="landing-hero" className="btn pale">
+              Join the waitlist
               <Arrow />
-            </a>
+            </WaitlistButton>
             <a className="btn line" href="#thread">
-              Try the live thread
+              Watch it work
             </a>
           </div>
           <p className="fine up" data-d="420">
-            Read-only until you approve. One card. One vendor. One amount.
+            Human approval by default. Enforceable limits always. Every outcome proved.
           </p>
         </div>
       </section>
@@ -156,21 +161,28 @@ export default function LandingPage() {
       <section className="band cost-band">
         <div className="shell">
           <div className="head cost-head">
-            <p className="eyebrow up">The quiet cost</p>
+            <p className="eyebrow up">The cost of drift</p>
             <h2 className="up" data-d="90">
-              Thirty-four subscriptions. You can name nineteen.
+              The company changed. The contracts didn&rsquo;t.
             </h2>
             <p className="lede up" data-d="180">
-              It isn&rsquo;t one bad decision. It&rsquo;s the seat nobody released, the monthly plan
-              nobody moved to annual, and the duplicate tool nobody had twenty minutes to cancel.
-              Small in isolation. Expensive together.
+              Tools outlive owners. Seats outlive teams. Old terms quietly become today&rsquo;s
+              defaults. Recurring spend is rarely one spectacular mistake — it is hundreds of
+              decisions nobody was asked to make again.
             </p>
           </div>
 
           <div className="figures">
             {FIGURES.map((f, i) => (
-              <article className={`fig up${f.saved ? " saved" : ""}`} key={f.count} data-d={60 + i * 100}>
-                <div className="fig-top"><span>{f.step}</span><p>{f.kind}</p></div>
+              <article
+                className={`fig up${f.saved ? " saved" : ""}`}
+                key={f.count}
+                data-d={60 + i * 100}
+              >
+                <div className="fig-top">
+                  <span>{f.step}</span>
+                  <p>{f.kind}</p>
+                </div>
                 <div className="n" data-count={f.count} data-prefix={f.prefix} data-dec={f.dec}>
                   {f.prefix}0
                 </div>
@@ -182,7 +194,7 @@ export default function LandingPage() {
           <div className="industry-card up" data-d="120">
             <Artwork scene="quiet" />
             <div className="industry-copy">
-              <p className="eyebrow">Industry data</p>
+              <p className="eyebrow">The scale of drift</p>
               <blockquote>
                 SaaS spend now runs <em>$4,830 per employee</em> — up 21.9% in a single year.
               </blockquote>
@@ -206,14 +218,14 @@ export default function LandingPage() {
         <div className="shell">
           <div className="journey-intro">
             <div>
-              <p className="eyebrow up">How it works</p>
+              <p className="eyebrow up">The control loop</p>
               <h2 className="up" data-d="70">
-                Five steps. <em>Exactly one is yours.</em>
+                Complex work. <em>One clear moment for you.</em>
               </h2>
             </div>
             <p className="lede up" data-d="130">
-              Renewly does the reading, arithmetic and vendor work. Your decision arrives only when
-              the exact move and amount are ready to approve.
+              Signals become a decision. The decision becomes enforceable authority. The authority
+              becomes a real-world outcome — with proof returned to the same place it began.
             </p>
           </div>
 
@@ -238,13 +250,13 @@ export default function LandingPage() {
 
           <div className="thread-stage" id="thread">
             <div className="thread-copy">
-              <p className="eyebrow up">One decision, in the thread</p>
+              <p className="eyebrow up">Chat is the product</p>
               <h2 className="up" data-d="90">
-                See the move. <em>Then let it finish.</em>
+                The decision finds you. <em>The dashboard doesn&rsquo;t have to.</em>
               </h2>
               <p className="lede up" data-d="180">
-                One pays, one cancels, and one is over your ceiling and stops. Answer them here and
-                watch the receipt come back to the same conversation.
+                Renewly meets you in the thread with one move, one number and one primary action.
+                Approve it there; the execution and evidence return to the same conversation.
               </p>
             </div>
 
@@ -257,13 +269,13 @@ export default function LandingPage() {
       <section className="band control-band">
         <div className="shell">
           <div className="head">
-            <p className="eyebrow up">Control</p>
+            <p className="eyebrow up">Authority before autonomy</p>
             <h2 className="up" data-d="90">
-              It only ever does what you&rsquo;ve allowed.
+              Give the agent a mandate. <em>Never a blank cheque.</em>
             </h2>
             <p className="lede up" data-d="180">
-              Every money-moving action is signed with your passkey and scoped to one vendor and one
-              amount. Set the ceiling below and watch what it&rsquo;s allowed to settle change.
+              Autonomy is earned inside rules you can see and stop. Every payment is merchant-scoped
+              and amount-capped; anything outside policy waits for your passkey.
             </p>
           </div>
 
@@ -278,38 +290,41 @@ export default function LandingPage() {
             <div className="proof-copy">
               <p className="eyebrow up">Proof, not projection</p>
               <blockquote className="up" data-d="70">
-                Every dollar back,
+                Nothing counts
                 <br />
-                <em>with a receipt behind it.</em>
+                <em>until it can be proved.</em>
               </blockquote>
               <p className="lede up" data-d="130">
-                A saving enters your total only after the vendor confirms the change and the new
-                charge matches. Until then, it is simply an opportunity.
+                Renewly keeps recommendations, actions and verified outcomes separate. Nothing
+                closes until vendor state, payment evidence or an explicit policy stop supports the
+                claim.
               </p>
             </div>
 
             <div className="proof-portrait up" data-d="100">
               <Artwork scene="proof" />
               <div className="proof-receipt">
-                <span>Realized this year</span>
-                <strong>$1,235.88</strong>
-                <small><i /> 12 vendor receipts matched</small>
+                <span>Evidence coverage</span>
+                <strong>12 / 12</strong>
+                <small>
+                  <i /> Every closed decision reconciled
+                </small>
               </div>
-              <p className="proof-caption">The receipt is the claim.</p>
+              <p className="proof-caption">Proof is the product.</p>
             </div>
           </div>
 
           <div className="proof-ledger">
             <div className="spend-intro">
               <div>
-                <p className="eyebrow up">Twelve months, reconciled</p>
+                <p className="eyebrow up">Finance-grade memory</p>
                 <h2 className="up" data-d="70">
-                  The line only moves when <em>the money does.</em>
+                  The memory behind <em>every recurring decision.</em>
                 </h2>
               </div>
               <p className="lede up" data-d="140">
-                Recurring spend after every executed cancellation, released seat and plan change.
-                Suggestions never enter the total. Receipts do.
+                What continued, what changed, who authorized it and what actually moved — reconciled
+                into a living record your finance team can trust.
               </p>
             </div>
 
@@ -323,34 +338,33 @@ export default function LandingPage() {
         <Artwork scene="closing" />
         <div className="shell wide close-in">
           <h2 className="up">
-            Forward one
+            One renewal is
             <br />
-            renewal <em>email.</em>
+            where <em>control begins.</em>
           </h2>
           <p className="lede up" data-d="150">
-            You&rsquo;ll get your five biggest leaks back in dollars, in minutes. Connect a card when
-            you want it to start acting on them.
+            Forward one email. Renewly turns it into a decision, an authorized action and proof —
+            the first entry in a living system for everything your company pays on repeat.
           </p>
           <div className="row up" data-d="280">
-            <a className="btn pale" href="/onboarding">
-              Start free
+            <WaitlistButton source="landing-closing" className="btn pale">
+              Join the waitlist
               <Arrow />
-            </a>
+            </WaitlistButton>
             <a className="btn line" href="#how">
-              See how it works
+              See the control loop
             </a>
           </div>
         </div>
       </section>
 
-      <footer>
+      <footer id="site-footer">
         <div className="shell wide foot">
-          <span>© 2026 Renewly — renewals that finish themselves.</span>
-          <nav>
-            <a href="#top">Security</a>
-            <a href="#top">Privacy</a>
-            <a href="#top">Docs</a>
-            <a href="#top">Careers</a>
+          <span>© 2026 Renewly — recurring spend, on purpose.</span>
+          <nav aria-label="Footer">
+            <a href="/security">Security</a>
+            <a href="/privacy">Privacy</a>
+            <ContactButton />
           </nav>
         </div>
       </footer>

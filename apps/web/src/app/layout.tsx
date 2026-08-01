@@ -25,14 +25,14 @@ const publicSans = Public_Sans({
 export const metadata: Metadata = {
   metadataBase: new URL("https://renewly.app"),
   title: {
-    default: "Renewly — the agentic CFO for founders",
+    default: "Renewly — recurring spend, on purpose",
     template: "%s · Renewly",
   },
   description:
-    "Rocket Money tells you you're overpaying. Renewly fixes it. An AI agent that watches your recurring software spend, catches renewals before they hit, and completes the action — with one human approval per money-moving step.",
+    "The agentic control plane for recurring spend. Renewly perceives every commitment, decides the right move, acts within your authority, and proves the outcome.",
   openGraph: {
-    title: "Renewly — the agentic CFO for founders",
-    description: "Rocket Money tells you you're overpaying. Renewly fixes it.",
+    title: "Renewly — recurring spend, on purpose",
+    description: "Every recurring commitment, decided and executed under human-set authority.",
     type: "website",
   },
 };
