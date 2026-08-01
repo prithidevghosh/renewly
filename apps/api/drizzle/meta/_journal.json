@@ -8,6 +8,20 @@
       "when": 1785479459424,
       "tag": "0000_clean_tattoo",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785572119312,
+      "tag": "0001_groovy_husk",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785572119313,
+      "tag": "0002_waitlist_mail_stages",
+      "breakpoints": true
     }
   ]
 }

@@ -151,6 +151,12 @@ export const parseStatusEnum = pgEnum("parse_status", [
   "duplicate",
 ]);
 
+export const waitlistEmailStatusEnum = pgEnum("waitlist_email_status", [
+  "pending",
+  "sent",
+  "failed",
+]);
+
 /* -------------------------------------------------------------------------- */
 /* Identity                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -763,6 +769,46 @@ export const inboundEmails = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
+/* Waitlist                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Pre-launch signups. Deliberately outside the workspace graph: an address here
+ * belongs to nobody yet, so there is no tenant to scope it to and no audit row
+ * to attach it to.
+ *
+ * A signup is only reported as successful once both mails have gone out, so the
+ * row records how far the loop got. The two timestamps are what make a retry
+ * safe: whichever message already landed is not sent again.
+ */
+export const waitlistEntries = pgTable(
+  "waitlist_entries",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    name: text("name"),
+    /** Which surface the signup came from — a landing section, a campaign. */
+    source: text("source").notNull().default("web"),
+    referrer: text("referrer"),
+    /** `sent` means both the welcome and the internal notice were delivered. */
+    mailStatus: waitlistEmailStatusEnum("mail_status").notNull().default("pending"),
+    /** The welcome note to the person who signed up. */
+    welcomeSentAt: timestamp("welcome_sent_at", { withTimezone: true }),
+    /** The internal notice to WAITLIST_NOTIFY_TO. */
+    noticeSentAt: timestamp("notice_sent_at", { withTimezone: true }),
+    mailError: text("mail_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One row per address: the join endpoint is public, so re-submitting must
+    // be inert rather than additive.
+    uniqueIndex("waitlist_entries_email_unique").on(t.email),
+    index("waitlist_entries_created_idx").on(t.createdAt),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
 /* Inferred row types                                                         */
 /* -------------------------------------------------------------------------- */
 
@@ -788,6 +834,7 @@ export type IdempotencyKey = typeof idempotencyKeys.$inferSelect;
 export type OutboxMessage = typeof outboxMessages.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
 export type InboundEmail = typeof inboundEmails.$inferSelect;
+export type WaitlistEntry = typeof waitlistEntries.$inferSelect;
 
 export type ChannelName = (typeof channelEnum.enumValues)[number];
 export type ApprovalState = (typeof approvalStateEnum.enumValues)[number];

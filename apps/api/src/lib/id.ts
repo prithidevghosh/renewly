@@ -26,7 +26,8 @@ export type IdPrefix =
   | "job"
   | "obx"
   | "idm"
-  | "eml";
+  | "eml"
+  | "wlt";
 
 export function newId(prefix: IdPrefix): string {
   return `${prefix}_${ulid()}`;
