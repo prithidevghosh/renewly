@@ -22,3 +22,4 @@ process.env.MOCK_PRAVA_RESULT = "";
 process.env.MAIL_OUTBOUND_MODE = "mock";
 process.env.MAIL_OUTBOUND_API_KEY = "";
 process.env.MAIL_FROM = "Renewly <test@renewly.test>";
+process.env.WAITLIST_NOTIFY_TO = "waitlist-notify@renewly.test";

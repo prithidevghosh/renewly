@@ -19,6 +19,7 @@ import {
 } from "./modules/ledger/routes.js";
 import { settingsRoutes } from "./modules/settings/routes.js";
 import { subscriptionRoutes } from "./modules/subscriptions/routes.js";
+import { waitlistRoutes } from "./modules/waitlist/routes.js";
 import type { AppEnv } from "./types/context.js";
 
 export const API_VERSION = "1.1.0";
@@ -74,6 +75,9 @@ export function createApp(): Hono<AppEnv> {
   // they are mounted before anything that expects a session.
   app.route("/v1/webhooks", channelWebhookRoutes);
   app.route("/v1/webhooks/mail", mailWebhookRoutes);
+
+  // Public, pre-account surface: no session exists yet by definition.
+  app.route("/v1/waitlist", waitlistRoutes);
 
   app.route("/v1/auth", authRoutes);
   app.route("/v1/me", meRoutes);
