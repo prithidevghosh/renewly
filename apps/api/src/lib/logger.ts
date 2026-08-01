@@ -1,4 +1,5 @@
-import { pino, type Logger } from "pino";
+import { createRequire } from "node:module";
+import { pino, type Logger, type LoggerOptions } from "pino";
 import { env } from "../env.js";
 
 /**
@@ -36,11 +37,41 @@ const REDACT_PATHS = [
   "AUTH_SECRET",
 ];
 
+/**
+ * Colourised, human-readable lines in development; single-line JSON everywhere
+ * else, because a log shipper wants the JSON and a person does not.
+ *
+ * pino-pretty is a devDependency, so a production install will not have it.
+ * Resolving it first means a `NODE_ENV=development` boot against a pruned
+ * install degrades to JSON rather than crashing in a worker thread.
+ */
+function prettyTransport(): LoggerOptions["transport"] {
+  if (env.NODE_ENV !== "development") return undefined;
+  try {
+    createRequire(import.meta.url).resolve("pino-pretty");
+  } catch {
+    return undefined;
+  }
+  return {
+    target: "pino-pretty",
+    options: {
+      colorize: true,
+      translateTime: "SYS:HH:MM:ss.l",
+      // The service/env pair is constant per process; the request id is not.
+      ignore: "pid,hostname,service,env",
+      messageKey: "msg",
+      errorLikeObjectKeys: ["err", "error"],
+      singleLine: false,
+    },
+  };
+}
+
 export const logger: Logger = pino({
   level: env.NODE_ENV === "test" ? "silent" : env.NODE_ENV === "production" ? "info" : "debug",
   redact: { paths: REDACT_PATHS, censor: "[redacted]" },
   base: { service: "renewly-api", env: env.NODE_ENV },
   timestamp: pino.stdTimeFunctions.isoTime,
+  transport: prettyTransport(),
 });
 
 export const childLogger = (bindings: Record<string, unknown>): Logger => logger.child(bindings);
