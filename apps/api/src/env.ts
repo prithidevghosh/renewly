@@ -88,6 +88,8 @@ const envSchema = z.object({
   MAIL_REPLY_TO: optional(z.string().email()),
   /** Where the internal "someone joined the waitlist" notice is sent. */
   WAITLIST_NOTIFY_TO: z.string().email().default("prithidevghosh@gmail.com"),
+  /** Where contact-form messages are sent. */
+  CONTACT_NOTIFY_TO: z.string().email().default("prithvi@renewly.live"),
 
   WORKER_ENABLED: z
     .enum(["true", "false"])

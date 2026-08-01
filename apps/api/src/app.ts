@@ -8,6 +8,7 @@ import { securityHeaders } from "./middleware/securityHeaders.js";
 import { approvalRoutes } from "./modules/approvals/routes.js";
 import { authRoutes, meRoutes } from "./modules/auth/routes.js";
 import { channelRoutes, channelWebhookRoutes } from "./modules/channels/routes.js";
+import { contactRoutes } from "./modules/contact/routes.js";
 import { decisionRoutes } from "./modules/decisions/routes.js";
 import { intakeRoutes } from "./modules/intake/routes.js";
 import { mailAddressRoutes, mailWebhookRoutes } from "./modules/intake/mail/routes.js";
@@ -78,6 +79,7 @@ export function createApp(): Hono<AppEnv> {
 
   // Public, pre-account surface: no session exists yet by definition.
   app.route("/v1/waitlist", waitlistRoutes);
+  app.route("/v1/contact", contactRoutes);
 
   app.route("/v1/auth", authRoutes);
   app.route("/v1/me", meRoutes);
