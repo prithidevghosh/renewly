@@ -3,10 +3,10 @@
 /**
  * The thread — the product, playable.
  *
- * Not one message frozen on a page: a session. Three renewals arrive in
- * sequence and each is genuinely resolvable, because the interesting thing
- * about this product is not that it can pay — it is what it does at the three
- * different kinds of edge:
+ * Not one message frozen on a page: a user-started walkthrough of the whole
+ * control loop. Three renewals arrive in sequence, proof never auto-advances,
+ * and each case is genuinely resolvable because the interesting thing about
+ * this product is not that it can pay — it is what it does at three edges:
  *
  *   Figma    money moves      → passkey, scoped card, receipt
  *   Loom     nothing moves    → no card and no biometric, and it says so
@@ -15,7 +15,9 @@
  *
  * Every branch ends somewhere truthful, including the three where no money
  * moves, because the decline paths are what make the approve path believable.
- * The tally in the header only ever counts what was actually executed.
+ * The tally in the header only ever counts what was actually executed. The
+ * confirmation chime is original Web Audio synthesis, optional, and primed
+ * only by the user's approval gesture.
  *
  * Timing is owned by a run counter rather than a heap of cleared timeouts: any
  * new choice (or unmount) increments it, and every awaited step drops out if
@@ -23,6 +25,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Logo } from "./brand-marks";
 
 type Tone = "gain" | "hold";
 type Line = { t: string; tone?: Tone; lead?: boolean };
@@ -30,6 +33,12 @@ type Msg = { id: number; who: "them" | "you"; lines: Line[] };
 
 type OptKind = "approve" | "raise" | "decline";
 type Opt = { label: string; kind: OptKind; primary?: boolean };
+type Resolution = {
+  title: string;
+  detail: string;
+  evidence: string[];
+  tone: "gain" | "hold";
+};
 
 type Deal = {
   key: string;
@@ -44,6 +53,7 @@ type Deal = {
   exec?: string;
   done: Line[];
   declined: Line[];
+  proof: Resolution;
   /** Shown when the ceiling is raised instead of a one-off approval. */
   raised?: Line[];
 };
@@ -77,6 +87,12 @@ const DEALS: Deal[] = [
       { t: "Kept. Figma renews at $144 on the 3rd." },
       { t: "I'll flag the idle seat again in October.", tone: "hold" },
     ],
+    proof: {
+      title: "Outcome proved",
+      detail: "$108 realized. Vendor state and charge both match.",
+      evidence: ["FG-448210", "Charge matched", "Ledger updated"],
+      tone: "gain",
+    },
   },
   {
     key: "loom",
@@ -102,6 +118,12 @@ const DEALS: Deal[] = [
       { t: "$168 realized.", tone: "gain" },
     ],
     declined: [{ t: "Kept. Loom renews at $168 on the 12th." }],
+    proof: {
+      title: "Cancellation proved",
+      detail: "$168 realized. Loom confirmed and no renewal charge appeared.",
+      evidence: ["LM-90114", "No charge found", "Ledger updated"],
+      tone: "gain",
+    },
   },
   {
     key: "datadog",
@@ -132,15 +154,64 @@ const DEALS: Deal[] = [
       { t: "Ceiling raised to $2,000." },
       { t: "This one sits inside it now, so it only needs your passkey." },
     ],
+    proof: {
+      title: "Outcome proved",
+      detail: "$448 realized. The annual term and scoped payment both match.",
+      evidence: ["DD-71330", "Charge matched", "Ledger updated"],
+      tone: "gain",
+    },
   },
 ];
 
 const CLOSING: Line[] = [
-  { t: "That's every renewal in the next thirty days." },
-  { t: "I'll be back when the next one shows up." },
+  { t: "That's every recurring decision in the next thirty days." },
+  { t: "I'll return when the next commitment needs attention." },
 ];
 
-type Stage = "choose" | "auth" | "scanning" | "verified" | "busy" | "end";
+type Stage = "ready" | "choose" | "auth" | "scanning" | "verified" | "busy" | "resolved" | "end";
+type Phase = "detect" | "decide" | "authorize" | "execute" | "prove";
+
+const PHASES: ReadonlyArray<{ key: Phase; label: string }> = [
+  { key: "detect", label: "Detect" },
+  { key: "decide", label: "Decide" },
+  { key: "authorize", label: "Authorize" },
+  { key: "execute", label: "Execute" },
+  { key: "prove", label: "Prove" },
+];
+
+const DECLINED: Resolution = {
+  title: "Decision recorded",
+  detail: "Nothing changed. Renewly will keep watching the commitment.",
+  evidence: ["No credential issued", "Policy unchanged", "Thread archived"],
+  tone: "hold",
+};
+
+/** A short original confirmation chime, synthesized in-browser. */
+function confirmationChime(context: AudioContext) {
+  const master = context.createGain();
+  const start = context.currentTime + 0.025;
+  master.gain.setValueAtTime(0.72, start);
+  master.connect(context.destination);
+
+  [
+    { hz: 659.25, at: 0, length: 0.28, level: 0.075 },
+    { hz: 987.77, at: 0.075, length: 0.34, level: 0.065 },
+    { hz: 1318.51, at: 0.16, length: 0.4, level: 0.045 },
+  ].forEach(({ hz, at, length, level }) => {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const on = start + at;
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(hz, on);
+    gain.gain.setValueAtTime(0.0001, on);
+    gain.gain.exponentialRampToValueAtTime(level, on + 0.018);
+    gain.gain.exponentialRampToValueAtTime(0.0001, on + length);
+    oscillator.connect(gain);
+    gain.connect(master);
+    oscillator.start(on);
+    oscillator.stop(on + length + 0.03);
+  });
+}
 
 /** Face ID bracket — corners, eyes and mouth light as the read completes. */
 function FaceMark({ progress, done }: { progress: number; done: boolean }) {
@@ -185,26 +256,52 @@ function Verified() {
   );
 }
 
+function SoundMark({ on }: { on: boolean }) {
+  return (
+    <svg viewBox="0 0 18 18" width="16" height="16" fill="none" aria-hidden="true">
+      <path
+        d="M3 7h2.3L8 4.8v8.4L5.3 11H3V7Z"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinejoin="round"
+      />
+      {on ? (
+        <>
+          <path d="M10.5 6.3c1.4 1.5 1.4 3.9 0 5.4" stroke="currentColor" strokeLinecap="round" />
+          <path d="M12.8 4.4c2.5 2.6 2.5 6.6 0 9.2" stroke="currentColor" strokeLinecap="round" />
+        </>
+      ) : (
+        <path d="m10.5 7 4 4m0-4-4 4" stroke="currentColor" strokeLinecap="round" />
+      )}
+    </svg>
+  );
+}
+
 const money = (n: number) => "$" + n.toLocaleString("en-US");
 
 export function Thread() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
-  const [stage, setStage] = useState<Stage>("busy");
+  const [stage, setStage] = useState<Stage>("ready");
+  const [phase, setPhase] = useState<Phase>("detect");
   const [deal, setDeal] = useState(0);
   const [typing, setTyping] = useState(false);
   const [progress, setProgress] = useState(0);
   const [realized, setRealized] = useState(0);
+  const [closed, setClosed] = useState(0);
+  const [resolution, setResolution] = useState<Resolution | null>(null);
+  const [soundOn, setSoundOn] = useState(true);
   const [reduce, setReduce] = useState(false);
-  const [started, setStarted] = useState(false);
 
   const run = useRef(0);
   const seq = useRef(0);
   const stream = useRef<HTMLDivElement>(null);
+  const audio = useRef<AudioContext | null>(null);
 
   useEffect(() => {
     setReduce(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
     return () => {
       run.current += 1; // anything still in flight stops touching state
+      void audio.current?.close();
     };
   }, []);
 
@@ -212,7 +309,19 @@ export function Thread() {
   useEffect(() => {
     const el = stream.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [msgs, typing, stage]);
+  }, [msgs, typing, stage, resolution]);
+
+  const prepareAudio = useCallback(() => {
+    if (!soundOn) return null;
+    const AudioConstructor =
+      window.AudioContext ??
+      (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioConstructor) return null;
+    const context = audio.current ?? new AudioConstructor();
+    audio.current = context;
+    if (context.state === "suspended") void context.resume().catch(() => undefined);
+    return context;
+  }, [soundOn]);
 
   const wait = useCallback(
     (ms: number) => new Promise<void>((r) => setTimeout(r, reduce ? 0 : ms)),
@@ -237,59 +346,49 @@ export function Thread() {
   const arrive = useCallback(
     async (id: number, i: number) => {
       setStage("busy");
-      await wait(900);
+      setPhase("detect");
+      setResolution(null);
+      await wait(420);
       if (run.current !== id) return;
 
       if (i >= DEALS.length) {
         await say(id, "them", CLOSING);
         if (run.current !== id) return;
+        setPhase("prove");
         setStage("end");
         return;
       }
 
       setDeal(i);
-      for (const bubble of DEALS[i].open) await say(id, "them", bubble);
+      await say(id, "them", DEALS[i].open[0]);
+      if (run.current !== id) return;
+      setPhase("decide");
+      for (const bubble of DEALS[i].open.slice(1)) await say(id, "them", bubble);
       if (run.current !== id) return;
       setStage("choose");
     },
     [say, wait],
   );
 
-  /* the first proposal arrives only once the reader can see it */
   const begin = useCallback(() => {
-    if (started) return;
-    setStarted(true);
+    if (stage !== "ready") return;
     arrive((run.current += 1), 0);
-  }, [arrive, started]);
+  }, [arrive, stage]);
 
-  useEffect(() => {
-    const el = stream.current;
-    if (!el) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          begin();
-          io.disconnect();
-        }
-      },
-      { threshold: 0.4 },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, [begin]);
-
-  const settle = useCallback(
-    async (id: number, gained: number) => {
-      if (run.current !== id) return;
-      if (gained) setRealized((v) => v + gained);
-      await arrive(id, deal + 1);
-    },
-    [arrive, deal],
-  );
+  const settle = useCallback((id: number, gained: number, nextResolution: Resolution) => {
+    if (run.current !== id) return;
+    if (gained) setRealized((v) => v + gained);
+    setClosed((v) => v + 1);
+    setResolution(nextResolution);
+    setPhase("prove");
+    setStage("resolved");
+  }, []);
 
   const authenticate = useCallback(async () => {
     const id = (run.current += 1);
     const d = DEALS[deal];
+    const context = prepareAudio();
+    setPhase("authorize");
     setStage("scanning");
     setProgress(0);
 
@@ -303,13 +402,16 @@ export function Thread() {
     await wait(300);
     if (run.current !== id) return;
     setStage("verified");
+    if (context?.state === "running") confirmationChime(context);
 
-    await wait(680);
+    await wait(560);
+    if (run.current !== id) return;
+    setPhase("execute");
     setStage("busy");
     if (d.exec) await say(id, "them", [{ t: d.exec }], 520);
     await say(id, "them", d.done);
-    await settle(id, d.realized);
-  }, [deal, say, settle, wait]);
+    settle(id, d.realized, d.proof);
+  }, [deal, prepareAudio, say, settle, wait]);
 
   const choose = useCallback(
     async (opt: Opt) => {
@@ -320,11 +422,12 @@ export function Thread() {
 
       if (opt.kind === "decline") {
         await say(id, "them", d.declined);
-        await settle(id, 0);
+        settle(id, 0, DECLINED);
         return;
       }
 
       if (opt.kind === "raise") {
+        setPhase("authorize");
         await say(id, "them", d.raised ?? []);
         if (run.current !== id) return;
         setStage("auth");
@@ -333,14 +436,18 @@ export function Thread() {
 
       /* approve — a biometric only where money actually moves */
       if (d.charge === 0) {
+        setPhase("execute");
         if (d.exec) await say(id, "them", [{ t: d.exec }]);
         await say(id, "them", d.done);
-        await settle(id, d.realized);
+        settle(id, d.realized, d.proof);
         return;
       }
 
+      setPhase("authorize");
       await say(id, "them", [
-        { t: `Face ID to authorize ${d.chargeLabel} to ${d.key === "figma" ? "Figma" : "Datadog"}.` },
+        {
+          t: `Face ID to authorize ${d.chargeLabel} to ${d.key === "figma" ? "Figma" : "Datadog"}.`,
+        },
         { t: `This card works once, at that vendor, up to ${d.chargeLabel}.` },
       ]);
       if (run.current !== id) return;
@@ -358,8 +465,16 @@ export function Thread() {
       { t: "Cancelled. Nothing was charged and no card was minted." },
       { t: d.declined[0].t, tone: "hold" },
     ]);
-    await settle(id, 0);
+    settle(id, 0, {
+      ...DECLINED,
+      title: "Authorization cancelled",
+      detail: "Nothing moved and no payment credential was created.",
+    });
   }, [deal, say, settle]);
+
+  const advance = useCallback(() => {
+    arrive((run.current += 1), deal + 1);
+  }, [arrive, deal]);
 
   const replay = useCallback(() => {
     run.current += 1;
@@ -368,25 +483,85 @@ export function Thread() {
     setTyping(false);
     setProgress(0);
     setRealized(0);
+    setClosed(0);
+    setResolution(null);
+    setPhase("detect");
+    setStage("ready");
     setDeal(0);
-    arrive(run.current, 0);
-  }, [arrive]);
+  }, []);
 
   const d = DEALS[deal];
+  const phaseIndex = PHASES.findIndex((item) => item.key === phase);
 
   return (
     <div className="tgrid">
       <div className="tpanel up" data-d="60">
         <div className="thead">
           <span className="tname">Renewly</span>
-          <span className="tsub">Today</span>
+          <span className="tsub">Interactive demo</span>
+          <span className="tprogress">
+            {stage === "end" ? "Complete" : `${deal + 1} of ${DEALS.length}`}
+          </span>
+          <button
+            type="button"
+            className="sound-toggle"
+            aria-label={`Turn confirmation sound ${soundOn ? "off" : "on"}`}
+            aria-pressed={soundOn}
+            onClick={() => setSoundOn((value) => !value)}
+          >
+            <SoundMark on={soundOn} />
+          </button>
           <span className="ttally">
             Realized <b>{money(realized)}</b>
           </span>
         </div>
 
+        <ol className="demo-rail" aria-label="Renewly control loop">
+          {PHASES.map((item, index) => (
+            <li
+              className={`${index < phaseIndex ? "done " : ""}${index === phaseIndex ? "current" : ""}`}
+              aria-current={index === phaseIndex ? "step" : undefined}
+              key={item.key}
+            >
+              <i />
+              <span>{item.label}</span>
+            </li>
+          ))}
+        </ol>
+
         <div className="tstream" ref={stream}>
-          <p className="day">August</p>
+          {stage === "ready" ? (
+            <div className="demo-signal">
+              <div className="signal-meta">
+                <span>Forwarded renewal</span>
+                <span>02 Aug · 09:41</span>
+              </div>
+              <div className="signal-vendor">
+                <Logo brand="figma" size={22} />
+                <div>
+                  <strong>Figma Professional</strong>
+                  <span>Renewal notice</span>
+                </div>
+              </div>
+              <dl>
+                <div>
+                  <dt>Renews</dt>
+                  <dd>03 August</dd>
+                </div>
+                <div>
+                  <dt>Quoted</dt>
+                  <dd>$144</dd>
+                </div>
+                <div>
+                  <dt>Seats</dt>
+                  <dd>4</dd>
+                </div>
+              </dl>
+              <p>Renewly will reconcile this with usage, policy and the matching card line.</p>
+            </div>
+          ) : (
+            <p className="day">August</p>
+          )}
 
           {msgs.map((m) => (
             <div className={`msg ${m.who}`} key={m.id}>
@@ -412,6 +587,18 @@ export function Thread() {
         </div>
 
         <div className="tdock">
+          {stage === "ready" ? (
+            <div className="demo-start">
+              <div>
+                <strong>Start with the signal</strong>
+                <span>Forward the email. Renewly takes it from signal to proof.</span>
+              </div>
+              <button type="button" className="chip on" onClick={begin}>
+                Forward to Renewly
+              </button>
+            </div>
+          ) : null}
+
           {stage === "choose" ? (
             <>
               <p className="tprompt">{d.prompt}</p>
@@ -468,11 +655,37 @@ export function Thread() {
 
           {stage === "busy" ? <p className="tprompt">Renewly is working…</p> : null}
 
+          {stage === "resolved" && resolution ? (
+            <div className={`proof-dock ${resolution.tone}`} aria-live="polite">
+              <div className="proof-dock-copy">
+                <i />
+                <div>
+                  <strong>{resolution.title}</strong>
+                  <span>{resolution.detail}</span>
+                </div>
+              </div>
+              <ul aria-label="Evidence attached">
+                {resolution.evidence.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+              <button type="button" className="chip on" onClick={advance}>
+                {deal === DEALS.length - 1 ? "Close the walkthrough" : "Next decision"}
+              </button>
+            </div>
+          ) : null}
+
           {stage === "end" ? (
-            <div className="tend">
-              <span className="fin">
-                {realized ? `${money(realized)} realized in this thread.` : "Nothing moved."}
-              </span>
+            <div className="tend demo-end">
+              <div>
+                <span className="fin">Walkthrough complete</span>
+                <strong>{closed} decisions reached a proved outcome.</strong>
+                <small>
+                  {realized
+                    ? `${money(realized)} realized and written to the ledger.`
+                    : "Every choice was recorded."}
+                </small>
+              </div>
               <button type="button" className="replay" onClick={replay}>
                 Run it again
               </button>
