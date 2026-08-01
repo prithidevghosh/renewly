@@ -1,0 +1,438 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   RENEWLY — "The Statement"
+   A private bank's client statement, set properly. Paper, ink, hairline rules,
+   and immaculate tabular figures. Every value here is documented in DESIGN.md.
+
+   Hard rules for this system:
+     · no glows, no blooms, no drop shadows (except the modal)
+     · no grain, no grid textures, no gradient meshes
+     · no monospace, no uppercase micro-labels
+     · no photographic or illustrative imagery — type, rules and numbers only
+   ========================================================================= */
+
+:root {
+  /* --- Paper ------------------------------------------------------------ */
+  --paper: #fbfaf7; /* page ground — warm ivory, never #FFF */
+  --paper-sunk: #f2f0ea; /* wells, table heads, inset panels */
+  --paper-card: #ffffff; /* raised card */
+  --paper-hover: #f6f4ef;
+  --paper-press: #eeebe4;
+
+  /* --- Ink -------------------------------------------------------------- */
+  --ink: #191712; /* primary text — warm near-black */
+  --ink-2: #4a463d; /* secondary */
+  --ink-3: #6e6859; /* tertiary */
+  --ink-4: #938c7c; /* metadata, axis labels */
+  --ink-5: #b8b1a1; /* disabled */
+
+  /* --- Rules ------------------------------------------------------------ */
+  --rule: rgb(25 23 18 / 0.1);
+  --rule-firm: rgb(25 23 18 / 0.18);
+  --rule-ink: rgb(25 23 18 / 0.32);
+
+  /* --- The two accents -------------------------------------------------- */
+  --claret: #7a2e3b; /* attention · the agent's hand · urgency */
+  --claret-soft: rgb(122 46 59 / 0.07);
+  --claret-line: rgb(122 46 59 / 0.28);
+
+  --forest: #2e5e4e; /* money saved — the only "positive" colour */
+  --forest-soft: rgb(46 94 78 / 0.07);
+  --forest-line: rgb(46 94 78 / 0.26);
+
+  /* --- Motion ----------------------------------------------------------- */
+  --ease-settle: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+
+  --dur-instant: 120ms;
+  --dur-quick: 200ms;
+  --dur-base: 320ms;
+  --dur-slow: 560ms;
+  --dur-long: 900ms;
+
+  /* --- Shape — crisp, barely rounded. Editorial, not consumer app. ------ */
+  --r-xs: 2px;
+  --r-sm: 3px;
+  --r-md: 4px;
+  --r-lg: 6px;
+  --r-xl: 8px;
+
+  color-scheme: light;
+}
+
+/* ============================================================================
+   Tailwind theme mapping
+   ========================================================================= */
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-sunk: var(--paper-sunk);
+  --color-card: var(--paper-card);
+  --color-hover: var(--paper-hover);
+  --color-press: var(--paper-press);
+
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-4: var(--ink-4);
+  --color-ink-5: var(--ink-5);
+
+  --color-rule: var(--rule);
+  --color-rule-firm: var(--rule-firm);
+  --color-rule-ink: var(--rule-ink);
+
+  --color-claret: var(--claret);
+  --color-forest: var(--forest);
+
+  --font-serif: var(--font-newsreader), "Iowan Old Style", Georgia, serif;
+  --font-sans: var(--font-public-sans), ui-sans-serif, system-ui, sans-serif;
+
+  /* Display — Newsreader, tight, editorial */
+  --text-display-xl: clamp(2.75rem, 6.6vw, 4.5rem);
+  --text-display-xl--line-height: 1.02;
+  --text-display-xl--letter-spacing: -0.021em;
+  --text-display-l: clamp(2.125rem, 4.4vw, 3.125rem);
+  --text-display-l--line-height: 1.06;
+  --text-display-l--letter-spacing: -0.018em;
+  --text-display-m: clamp(1.625rem, 2.8vw, 2.125rem);
+  --text-display-m--line-height: 1.12;
+  --text-display-m--letter-spacing: -0.014em;
+
+  /* Titles — Public Sans */
+  --text-title-l: 1.375rem;
+  --text-title-l--line-height: 1.28;
+  --text-title-l--letter-spacing: -0.014em;
+  --text-title-m: 1.125rem;
+  --text-title-m--line-height: 1.36;
+  --text-title-m--letter-spacing: -0.011em;
+  --text-title-s: 0.9375rem;
+  --text-title-s--line-height: 1.4;
+  --text-title-s--letter-spacing: -0.006em;
+
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.62;
+  --text-body--letter-spacing: -0.003em;
+  --text-body-s: 0.875rem;
+  --text-body-s--line-height: 1.55;
+  --text-caption: 0.8125rem;
+  --text-caption--line-height: 1.45;
+  --text-label: 0.75rem;
+  --text-label--line-height: 1.3;
+
+  --radius-xs: var(--r-xs);
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
+}
+
+/* ============================================================================
+   Base
+   ========================================================================= */
+
+* {
+  border-color: var(--rule);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-public-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.9375rem;
+  line-height: 1.62;
+  letter-spacing: -0.003em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: var(--claret);
+  color: var(--paper);
+}
+
+:focus-visible {
+  outline: 2px solid var(--claret);
+  outline-offset: 2px;
+  border-radius: 1px;
+}
+
+/* ============================================================================
+   Figures — the heart of the system.
+   Money is set in the text faces with LINING TABULAR figures, exactly as a
+   statement would be. No monospace anywhere: mono reads "machine output",
+   and this product is asking to be trusted like an institution.
+   ========================================================================= */
+
+.figure {
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+
+/* Big money moments are set in the serif — annual-report scale. */
+.figure-display {
+  font-family: var(--font-newsreader), Georgia, serif;
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  letter-spacing: -0.02em;
+}
+
+/* ============================================================================
+   Editorial furniture
+   ========================================================================= */
+
+/* Section marker: a short claret rule, then a sentence-case label.
+   Replaces the mono uppercase eyebrow entirely. */
+.marker {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  font-weight: 500;
+  color: var(--ink-4);
+}
+.marker::before {
+  content: "";
+  width: 1.25rem;
+  height: 1px;
+  background: var(--claret);
+  flex: none;
+}
+
+/* Quiet metadata label. Sentence case, never uppercase. */
+.label {
+  font-size: 0.75rem;
+  line-height: 1.3;
+  font-weight: 500;
+  color: var(--ink-4);
+  letter-spacing: 0;
+}
+
+/* The agent speaks in the margin, like an editor's annotation. */
+.margin-note {
+  border-left: 2px solid var(--claret);
+  padding-left: 1.125rem;
+}
+
+/* A rule that fades at both ends — used between editorial sections. */
+.rule-fade {
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--rule-firm) 12%,
+    var(--rule-firm) 88%,
+    transparent
+  );
+}
+
+.shell-x {
+  padding-inline: 1.5rem;
+}
+@media (min-width: 768px) {
+  .shell-x {
+    padding-inline: 2.5rem;
+  }
+}
+@media (min-width: 1280px) {
+  .shell-x {
+    padding-inline: 4rem;
+  }
+}
+
+/* Scrollbars — quiet, paper-coloured. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-5) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--ink-5);
+  border-radius: 99px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+/* Range inputs — the guardrail sliders. */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 20px;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 1px;
+  background: var(--rule-ink);
+}
+input[type="range"]::-moz-range-track {
+  height: 1px;
+  background: var(--rule-ink);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -7px;
+  width: 15px;
+  height: 15px;
+  border-radius: 99px;
+  background: var(--claret);
+  border: 3px solid var(--paper);
+  box-shadow: 0 0 0 1px var(--rule-ink);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border-radius: 99px;
+  background: var(--claret);
+  border: 3px solid var(--paper);
+  box-shadow: 0 0 0 1px var(--rule-ink);
+}
+
+/* ============================================================================
+   Motion — entrances are pure CSS so they always resolve. JS-driven entrances
+   gate content behind requestAnimationFrame, which is throttled to a standstill
+   in background tabs; a dropped frame there means permanently invisible content.
+   ========================================================================= */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes grow-x {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.stage-in {
+  animation: rise 420ms var(--ease-settle) both;
+  animation-delay: var(--stagger, 0ms);
+}
+.fade-in {
+  animation: fade-in 260ms var(--ease-settle) both;
+}
+.slide-in {
+  animation: slide-in 320ms var(--ease-settle) both;
+}
+.grow-x {
+  animation: grow-x 820ms var(--ease-settle) both;
+  transform-origin: left center;
+}
+.pulse-soft {
+  animation: pulse-soft 2.4s var(--ease-inout) infinite;
+}
+
+/* Reveal used across the marketing page. Visible by default; JS only ever
+   hides content it can guarantee it will bring back. */
+.rv-load {
+  animation: rise 620ms var(--ease-settle) both;
+  animation-delay: var(--rv-delay, 0ms);
+}
+.rv-scroll {
+  opacity: 0;
+  transform: translateY(16px);
+  transition:
+    opacity 620ms var(--ease-settle),
+    transform 620ms var(--ease-settle);
+}
+.rv-scroll-in {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ============================================================================
+   Utilities
+   ========================================================================= */
+
+@utility text-pretty {
+  text-wrap: pretty;
+}
+
+@utility text-balance {
+  text-wrap: balance;
+}
