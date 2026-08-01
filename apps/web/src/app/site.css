@@ -225,11 +225,12 @@ em{font-style:italic}
 .open .fine{margin-top:26px;font-size:14px;color:rgb(251 249 244 / .5)}
 @media(max-aspect-ratio:1/1){
   .open .art{--z:1}   /* portrait frame needs no additional plate zoom */
-  /* portrait stacks the copy at the bottom, so the scrim has to weight down,
-     not left — otherwise the paragraph sits on the brightest part of the frame */
+  /* Portrait keeps the refracted light visible above the copy, then resolves
+     it into a warm-black reading field. Every text layer now lands on a
+     predictable surface instead of whichever colour happens to be in the art. */
   .open .art::after{background:
-    linear-gradient(0deg,rgb(12 11 10 / .93) 0%,rgb(12 11 10 / .78) 20%,rgb(12 11 10 / .4) 42%,transparent 64%),
-    linear-gradient(180deg,rgb(12 11 10 / .55) 0%,transparent 20%)}
+    linear-gradient(0deg,rgb(12 11 10 / .99) 0%,rgb(12 11 10 / .96) 38%,rgb(12 11 10 / .82) 62%,rgb(12 11 10 / .18) 100%),
+    linear-gradient(180deg,rgb(12 11 10 / .72) 0%,rgb(12 11 10 / .22) 20%,transparent 34%)}
   .open h1{font-size:clamp(40px,9vw,60px);max-width:none}
   .open .lede{max-width:38ch}
 }
@@ -777,11 +778,15 @@ footer{padding:28px 0 30px;background:var(--ivory)}
   .mark{font-size:22px}
   .nav .btn{padding:9px 15px;font-size:13.5px}
   .open-in{padding-top:124px;padding-bottom:46px}
-  .open h1{font-size:clamp(38px,11vw,48px)}
-  .open .lede{font-size:16px;line-height:1.55}
+  .open h1{font-size:clamp(38px,10.25vw,44px);line-height:1.01;
+    text-shadow:0 2px 28px rgb(8 7 6 / .68)}
+  .open h1>.hero-dollar{display:block}
+  .hero-kicker{color:rgb(251 249 244 / .78)}
+  .open .lede{max-width:35ch;font-size:16px;line-height:1.55;color:rgb(251 249 244 / .86);
+    text-shadow:0 1px 20px rgb(8 7 6 / .58)}
   .open .row{display:grid;grid-template-columns:1fr;width:min(100%,300px);gap:10px}
   .open .row .btn{padding-inline:14px;text-align:center;font-size:13.5px;white-space:nowrap}
-  .open .fine{font-size:12.5px;line-height:1.5}
+  .open .fine{max-width:34ch;font-size:12.5px;line-height:1.5;color:rgb(251 249 244 / .68)}
   .act{grid-template-columns:1fr}
   .act .v{text-align:left}
   .foot nav{gap:16px;flex-wrap:wrap}

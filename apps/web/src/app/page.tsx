@@ -133,7 +133,7 @@ export default function LandingPage() {
         <div className="shell wide open-in">
           <p className="hero-kicker up">The agentic control plane for recurring spend</p>
           <h1 data-words>
-            Every recurring dollar
+            Every recurring <span className="hero-dollar">dollar</span>
             <br />
             <em>leaves on purpose.</em>
           </h1>
