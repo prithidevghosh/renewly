@@ -19,6 +19,9 @@ next-env.d.ts
 # Landing page explorations. Local only.
 sample
 
+# Working notes on product and design decisions. Local only.
+memory
+
 .DS_Store
 *.log
 npm-debug.log*
