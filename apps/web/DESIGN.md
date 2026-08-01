@@ -19,8 +19,15 @@ pattern merely because it already exists.
 
 ## 1. The idea
 
-Renewly handles renewals rather than merely reporting them. It finds hidden recurring
-spend, asks for one precise decision, executes the change, and returns proof.
+Renewly is the agentic control plane for recurring spend. It perceives commercial
+commitments across signals, decides what should continue, applies human-set authority,
+executes the real-world outcome, and returns finance-grade proof. Renewals are the first
+high-intent workflow and product wedge; they are not the boundary of the category.
+
+The long-term category is **agentic recurring commerce for the buy-side**. The product
+must never be framed as merely a renewal assistant, subscription tracker, savings
+dashboard, or advice bot. Chat is the daily product; the web is the cockpit for policy,
+exceptions, overview, and audit.
 
 The visual system expresses that through one idea:
 
@@ -44,6 +51,10 @@ and a precise modern tool were designed by the same person.
 2. **One decision deserves focus.** Do not make every element compete for attention.
 3. **Proof outranks promise.** A receipt, matched charge or executed state is visually
    stronger than an opportunity or recommendation.
+
+Proof must represent the full control loop, not only savings. Paid, changed, cancelled,
+expired, blocked, and policy-stopped decisions all belong in the ledger. A descending
+spend chart is supporting evidence at most; it must never become the product story.
 
 ---
 
@@ -70,20 +81,20 @@ Product screens may be denser than the landing page, but they must not become lo
 
 ### 3.1 Core palette
 
-| Token | Value | Role |
-| --- | --- | --- |
-| `--ivory` | `#F4F0E8` | Default canvas |
-| `--ivory-2` | `#EBE5D9` | Recessed paper, subtle section contrast |
-| `--paper` | `#FBF9F4` | Raised sheet, receipt, input surface |
-| `--night` | `#171512` | Cinematic dark field and high-focus moments |
-| `--night-2` | `#100F0C` | Deepest photographic scrim |
-| `--ink` | `#1B1815` | Primary text and primary action |
-| `--ink-2` | `#544E45` | Body copy |
-| `--ink-3` | `#8B8478` | Labels and secondary metadata |
-| `--ink-4` | `#BAB3A6` | Quiet numbers and disabled detail |
-| `--sage` | `#66795C` | Money realized, verified success |
-| `--clay` | `#A26A4E` | Stopped, destructive, needs attention |
-| `--gilt` | `#B8945F` | Rare warmth; never a routine CTA colour |
+| Token       | Value     | Role                                        |
+| ----------- | --------- | ------------------------------------------- |
+| `--ivory`   | `#F4F0E8` | Default canvas                              |
+| `--ivory-2` | `#EBE5D9` | Recessed paper, subtle section contrast     |
+| `--paper`   | `#FBF9F4` | Raised sheet, receipt, input surface        |
+| `--night`   | `#171512` | Cinematic dark field and high-focus moments |
+| `--night-2` | `#100F0C` | Deepest photographic scrim                  |
+| `--ink`     | `#1B1815` | Primary text and primary action             |
+| `--ink-2`   | `#544E45` | Body copy                                   |
+| `--ink-3`   | `#8B8478` | Labels and secondary metadata               |
+| `--ink-4`   | `#BAB3A6` | Quiet numbers and disabled detail           |
+| `--sage`    | `#66795C` | Money realized, verified success            |
+| `--clay`    | `#A26A4E` | Stopped, destructive, needs attention       |
+| `--gilt`    | `#B8945F` | Rare warmth; never a routine CTA colour     |
 
 ### 3.2 Usage rules
 
@@ -103,7 +114,7 @@ Use warm hairlines derived from ink:
 
 ```css
 --rule: rgb(27 24 21 / 0.12);
---rule-2: rgb(27 24 21 / 0.20);
+--rule-2: rgb(27 24 21 / 0.2);
 ```
 
 Depth is quiet: a light inner edge and a long, low-opacity shadow. Only objects that are
@@ -115,11 +126,11 @@ materially raised—policy sheets, receipts, conversation panes, modals—receiv
 
 ### 4.1 Families
 
-| Role | Family | Use |
-| --- | --- | --- |
-| Display | **Newsreader** | Hero statements, section claims, editorial figures |
-| UI/body | **Supreme** | Paragraphs, controls, navigation, labels |
-| Dense data | Tabular UI/mono where needed | Tables, IDs, timestamps, aligned ledgers |
+| Role       | Family                       | Use                                                |
+| ---------- | ---------------------------- | -------------------------------------------------- |
+| Display    | **Newsreader**               | Hero statements, section claims, editorial figures |
+| UI/body    | **Supreme**                  | Paragraphs, controls, navigation, labels           |
+| Dense data | Tabular UI/mono where needed | Tables, IDs, timestamps, aligned ledgers           |
 
 Newsreader supplies warmth and institutional confidence. Supreme keeps the product modern
 and clear. Their contrast is part of the brand; do not replace both with one generic sans.
@@ -139,15 +150,15 @@ and clear. Their contrast is part of the brand; do not replace both with one gen
 
 ### 4.3 Approximate scale
 
-| Role | Responsive size |
-| --- | --- |
-| Hero | `clamp(42px, 5.4vw, 84px)` |
-| Section statement | `clamp(32px, 4.6vw, 62px)` |
-| Editorial money | `clamp(44px, 5.6vw, 78px)` |
-| Card title | 22–29px Newsreader or 16–20px Supreme |
-| Body lead | `clamp(17px, 1.35vw, 20px)` |
-| UI body | 14–16.5px |
-| Metadata | 12–13.5px |
+| Role              | Responsive size                       |
+| ----------------- | ------------------------------------- |
+| Hero              | `clamp(42px, 5.4vw, 84px)`            |
+| Section statement | `clamp(32px, 4.6vw, 62px)`            |
+| Editorial money   | `clamp(44px, 5.6vw, 78px)`            |
+| Card title        | 22–29px Newsreader or 16–20px Supreme |
+| Body lead         | `clamp(17px, 1.35vw, 20px)`           |
+| UI body           | 14–16.5px                             |
+| Metadata          | 12–13.5px                             |
 
 ---
 
@@ -265,6 +276,23 @@ Think in terms of policy sheets, ledgers, receipts and correspondence:
 - Keep one obvious primary action in a composition.
 - Hover is a subtle value change or small directional movement—not scale, bounce or glow.
 
+### 7.5 Product walkthroughs
+
+A demo must let the visitor experience the operating loop, not watch a canned chat:
+
+- Begin with a concrete signal such as a forwarded renewal email.
+- Make detect → decide → authorize → execute → prove visible as state, without exposing
+  internal technical complexity.
+- Let the visitor make the consequential choice and control when the next case begins.
+- Include both a successful scoped payment and an honest policy/failure path.
+- Hold on the proved terminal state long enough to inspect the confirmation and ledger evidence.
+- Never auto-advance past proof.
+
+Confirmation sound may reinforce a user-initiated approval. It must be original,
+synthesized or properly licensed, short, optional, and never the only confirmation. Sound
+defaults must respect context: no audio before a direct user gesture and an obvious mute
+control must remain available throughout the walkthrough.
+
 ---
 
 ## 8. Motion
@@ -293,17 +321,32 @@ motion stops, and no interaction becomes dependent on animation completing.
 
 Renewly sounds exact, calm and outcome-led.
 
+### Narrative hierarchy
+
+1. **Category:** the control plane for recurring spend.
+2. **Promise:** recurring money leaves — or is stopped — on purpose.
+3. **Mechanism:** perceive → decide → authorize → execute → prove.
+4. **Entry point:** start with one renewal.
+
+The renewal moment makes the promise concrete. It should not shrink the company into a
+“renewal agent.” Prefer language about commitments, authority, outcomes, and proof; use
+renewal language for examples and calls to action.
+
 ### Use
 
-- “Every dollar back, with a receipt behind it.”
+- “Every recurring dollar leaves on purpose.”
+- “Give the agent a mandate. Never a blank cheque.”
+- “One renewal is where control begins.”
 - “Stopped — over your ceiling.”
-- “Three of four settle alone.”
+- “Three of four inside policy.”
 - Exact vendors, dates, amounts and consequences.
 
 ### Avoid
 
 - “Unlock powerful AI insights.”
 - “Effortlessly optimize your SaaS stack.”
+- “Your renewal agent.”
+- “Renewals that finish themselves.”
 - “You could potentially save.”
 - Exclamation marks, anthropomorphic chatter and generic AI language.
 
@@ -347,17 +390,17 @@ The supported design range is 320px mobile through 1920px wide monitor.
 
 ## 12. Do / don't
 
-| Do | Don't |
-| --- | --- |
-| Use warm paper, ink and restrained sage | Default to cold white, blue-black or acid neon |
-| Let one exact number carry the argument | Fill the screen with equal KPI cards |
-| Show the consequence beside the control | Present an isolated calculator or knob |
-| Use refracted light as meaningful atmosphere | Turn spectrum colours into a UI gradient system |
-| Combine related ideas into one chapter | Stack many interchangeable SaaS sections |
-| Use receipts and matched charges as proof | Style opportunities as realized savings |
-| Use asymmetric editorial layouts | Centre every heading over a symmetrical card grid |
-| Let motion settle | Bounce, pulse or endlessly animate money states |
-| Keep copy precise and short | Use generic AI and optimization language |
+| Do                                           | Don't                                             |
+| -------------------------------------------- | ------------------------------------------------- |
+| Use warm paper, ink and restrained sage      | Default to cold white, blue-black or acid neon    |
+| Let one exact number carry the argument      | Fill the screen with equal KPI cards              |
+| Show the consequence beside the control      | Present an isolated calculator or knob            |
+| Use refracted light as meaningful atmosphere | Turn spectrum colours into a UI gradient system   |
+| Combine related ideas into one chapter       | Stack many interchangeable SaaS sections          |
+| Use receipts and matched charges as proof    | Style opportunities as realized savings           |
+| Use asymmetric editorial layouts             | Centre every heading over a symmetrical card grid |
+| Let motion settle                            | Bounce, pulse or endlessly animate money states   |
+| Keep copy precise and short                  | Use generic AI and optimization language          |
 
 ---
 
