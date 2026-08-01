@@ -15,3 +15,10 @@ process.env.PRAVA_POLL_INTERVAL_MS ??= "0";
 process.env.LLM_API_KEY = "";
 process.env.MOCK_PRAVA_FAIL = "";
 process.env.MOCK_PRAVA_RESULT = "";
+
+// Same reasoning, and the same trap: a developer running with a live mail key
+// must not have the suite send real email — or bill their Resend account — the
+// moment they type `pnpm test`. Assignment, not `??=`: .env must lose here.
+process.env.MAIL_OUTBOUND_MODE = "mock";
+process.env.MAIL_OUTBOUND_API_KEY = "";
+process.env.MAIL_FROM = "Renewly <test@renewly.test>";

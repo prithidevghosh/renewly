@@ -25,6 +25,17 @@ async function main(): Promise<void> {
   // WORKER_ENABLED set to false.
   startWorker(handle.db);
 
+  // A key is configured but nothing will be sent: the single most confusing
+  // state this service can boot into, so it is said out loud rather than
+  // inferred from an absence of mail.
+  if (env.MAIL_OUTBOUND_MODE === "mock" && env.MAIL_OUTBOUND_API_KEY) {
+    logger.warn(
+      { mailOutboundMode: "mock", from: env.MAIL_FROM },
+      "MAIL_OUTBOUND_API_KEY is set but MAIL_OUTBOUND_MODE=mock — outbound mail is captured " +
+        "in memory and no message will reach anyone. Set MAIL_OUTBOUND_MODE=live to send.",
+    );
+  }
+
   const server = serve({ fetch: createApp().fetch, port: env.PORT }, (info) => {
     logger.info(
       {
@@ -34,6 +45,8 @@ async function main(): Promise<void> {
         linqMode: env.LINQ_MODE,
         whatsappMode: env.WHATSAPP_MODE,
         mailMode: env.MAIL_MODE,
+        mailOutboundMode: env.MAIL_OUTBOUND_MODE,
+        mailFrom: env.MAIL_FROM,
         worker: env.WORKER_ENABLED,
         llm: env.LLM_API_KEY ? "configured" : "heuristic-fallback",
       },

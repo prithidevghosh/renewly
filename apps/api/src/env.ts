@@ -80,6 +80,13 @@ const envSchema = z.object({
   MAIL_WEBHOOK_SECRET: optional(z.string()),
   MAIL_INBOUND_DOMAIN: z.string().default("inbound.renewly.app"),
 
+  /** Outbound mail, sent through Resend. Separate from MAIL_MODE, which is inbound. */
+  MAIL_OUTBOUND_MODE: z.enum(["mock", "live"]).default("mock"),
+  MAIL_OUTBOUND_API_KEY: optional(z.string()),
+  /** RFC 5322 sender. The domain must be verified with the provider. */
+  MAIL_FROM: z.string().min(3).default("Renewly <hello@renewly.app>"),
+  MAIL_REPLY_TO: optional(z.string().email()),
+
   WORKER_ENABLED: z
     .enum(["true", "false"])
     .default("true")

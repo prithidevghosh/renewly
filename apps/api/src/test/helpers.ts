@@ -3,6 +3,7 @@ import { createApp } from "../app.js";
 import { createDatabase, setDatabaseHandle, type DatabaseHandle } from "../db/client.js";
 import { runMigrations } from "../db/migrate.js";
 import { setLlmClient } from "../lib/llm.js";
+import { clearMailbox, readMailbox, setMailTransport, type SentEmail } from "../lib/mailer.js";
 import { resetChannelAdapters } from "../modules/channels/registry.js";
 import { seedMerchants } from "../modules/merchants/service.js";
 import { setCheckoutAdapter } from "../modules/payments/checkoutAdapter.js";
@@ -19,6 +20,8 @@ export interface TestHarness {
   flushOutbox: () => Promise<{ sent: number; failed: number }>;
   /** Runs the expiry sweep. */
   expireApprovals: () => Promise<number>;
+  /** Everything outbound mail captured in mock mode, oldest first. */
+  mailbox: () => readonly SentEmail[];
   tick: () => Promise<unknown>;
   close: () => Promise<void>;
 }
@@ -44,6 +47,8 @@ export async function createHarness(
   setCheckoutAdapter(null);
   setLlmClient(null);
   resetChannelAdapters();
+  setMailTransport(null);
+  clearMailbox();
 
   const app = createApp();
 
@@ -53,12 +58,15 @@ export async function createHarness(
     prava,
     flushOutbox: () => drainOutbox(handle.db),
     expireApprovals: () => expireApprovals(handle.db),
+    mailbox: () => readMailbox(),
     tick: () => runTick(handle.db),
     close: async () => {
       setPravaClient(null);
       setCheckoutAdapter(null);
       setLlmClient(null);
       resetChannelAdapters();
+      setMailTransport(null);
+      clearMailbox();
       setDatabaseHandle(null);
       await handle.close();
     },

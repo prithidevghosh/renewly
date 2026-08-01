@@ -60,6 +60,9 @@ export function createApp(): Hono<AppEnv> {
         env.WHATSAPP_MODE === "mock" ||
         Boolean(env.WHATSAPP_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID),
       mailMode: env.MAIL_MODE,
+      mailOutboundMode: env.MAIL_OUTBOUND_MODE,
+      mailOutboundConfigured:
+        env.MAIL_OUTBOUND_MODE === "mock" || Boolean(env.MAIL_OUTBOUND_API_KEY),
       checkoutAdapterMode: env.CHECKOUT_ADAPTER_MODE,
       workerEnabled: env.WORKER_ENABLED,
       version: API_VERSION,
