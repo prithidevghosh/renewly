@@ -9,6 +9,15 @@ const csv = (value: string): string[] =>
     .map((part) => part.trim())
     .filter(Boolean);
 
+/**
+ * A key left blank in `.env` — `MOCK_PRAVA_FAIL=` — reaches us as "" rather
+ * than undefined. That is a template placeholder, not a value, so it means
+ * unset. Without this a blank line in the shipped `.env.example` fails boot on
+ * every schema stricter than a plain string.
+ */
+const optional = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((value) => (value === "" ? undefined : value), schema.optional());
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(4000),
@@ -22,13 +31,13 @@ const envSchema = z.object({
   AUTH_SECRET: z.string().min(32).default("renewly-development-secret-do-not-use-in-production"),
   AUTH_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(60 * 60 * 24 * 7),
 
-  LLM_API_KEY: z.string().optional(),
+  LLM_API_KEY: optional(z.string()),
   LLM_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
   LLM_MODEL: z.string().default("gpt-4o-mini"),
 
   PRAVA_MODE: z.enum(["mock", "sandbox", "live"]).default("mock"),
-  PRAVA_SECRET_KEY: z.string().optional(),
-  PRAVA_PUBLISHABLE_KEY: z.string().optional(),
+  PRAVA_SECRET_KEY: optional(z.string()),
+  PRAVA_PUBLISHABLE_KEY: optional(z.string()),
   PRAVA_API_BASE: z.string().url().default("https://sandbox.api.prava.space"),
   PRAVA_POLL_ATTEMPTS: z.coerce.number().int().positive().default(20),
   PRAVA_POLL_INTERVAL_MS: z.coerce.number().int().nonnegative().default(1500),
@@ -46,21 +55,21 @@ const envSchema = z.object({
     .default("US")
     .transform((value) => value.toUpperCase()),
 
-  MOCK_PRAVA_FAIL: z.enum(["mandate", "card", "decline"]).optional(),
-  MOCK_PRAVA_RESULT: z.enum(["success", "decline", "pending", "mandate_fail"]).optional(),
+  MOCK_PRAVA_FAIL: optional(z.enum(["mandate", "card", "decline"])),
+  MOCK_PRAVA_RESULT: optional(z.enum(["success", "decline", "pending", "mandate_fail"])),
 
   LINQ_MODE: z.enum(["mock", "live"]).default("mock"),
-  LINQ_API_KEY: z.string().optional(),
-  LINQ_WEBHOOK_SECRET: z.string().optional(),
+  LINQ_API_KEY: optional(z.string()),
+  LINQ_WEBHOOK_SECRET: optional(z.string()),
   LINQ_BASE_URL: z.string().url().default("https://api.linqapp.com/api/partner/v3"),
   /** A line provisioned on the Linq account; required to start a chat. */
-  LINQ_FROM_NUMBER: z.string().optional(),
+  LINQ_FROM_NUMBER: optional(z.string()),
 
   WHATSAPP_MODE: z.enum(["mock", "live"]).default("mock"),
-  WHATSAPP_TOKEN: z.string().optional(),
-  WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
-  WHATSAPP_VERIFY_TOKEN: z.string().optional(),
-  WHATSAPP_APP_SECRET: z.string().optional(),
+  WHATSAPP_TOKEN: optional(z.string()),
+  WHATSAPP_PHONE_NUMBER_ID: optional(z.string()),
+  WHATSAPP_VERIFY_TOKEN: optional(z.string()),
+  WHATSAPP_APP_SECRET: optional(z.string()),
   /** Graph versions are supported for about two years from release. */
   WHATSAPP_GRAPH_VERSION: z
     .string()
@@ -68,7 +77,7 @@ const envSchema = z.object({
     .default("v25.0"),
 
   MAIL_MODE: z.enum(["mock", "live"]).default("mock"),
-  MAIL_WEBHOOK_SECRET: z.string().optional(),
+  MAIL_WEBHOOK_SECRET: optional(z.string()),
   MAIL_INBOUND_DOMAIN: z.string().default("inbound.renewly.app"),
 
   WORKER_ENABLED: z
@@ -79,8 +88,8 @@ const envSchema = z.object({
   APPROVAL_TTL_MINUTES: z.coerce.number().int().positive().default(60),
 
   CHECKOUT_ADAPTER_MODE: z.enum(["mock", "http"]).default("mock"),
-  CHECKOUT_ADAPTER_URL: z.string().url().optional(),
-  CHECKOUT_ADAPTER_SECRET: z.string().optional(),
+  CHECKOUT_ADAPTER_URL: optional(z.string().url()),
+  CHECKOUT_ADAPTER_SECRET: optional(z.string()),
 
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(1_048_576),
   MAX_CSV_ROWS: z.coerce.number().int().positive().default(5000),
@@ -130,6 +139,9 @@ function parseEnv(): Env {
   }
   if (value.MAIL_MODE === "live" && !value.MAIL_WEBHOOK_SECRET) {
     throw new Error("MAIL_WEBHOOK_SECRET is required when MAIL_MODE is live");
+  }
+  if (value.MAIL_OUTBOUND_MODE === "live" && !value.MAIL_OUTBOUND_API_KEY) {
+    throw new Error("MAIL_OUTBOUND_API_KEY is required when MAIL_OUTBOUND_MODE is live");
   }
   if (value.CHECKOUT_ADAPTER_MODE === "http" && !value.CHECKOUT_ADAPTER_URL) {
     throw new Error("CHECKOUT_ADAPTER_URL is required when CHECKOUT_ADAPTER_MODE is http");
