@@ -3,7 +3,7 @@
 /**
  * The guardrails console — the one control on the page that actually controls
  * something. Move the ceiling and the four queued actions genuinely re-resolve
- * between "settles on its own", "waiting on you" and "stopped".
+ * between "acts inside policy", "needs your approval" and "stopped".
  *
  * The three controls mirror the real policy surface: an envelope the agent may
  * act inside, a per-action ceiling, and a kill switch that outranks both. The
@@ -24,7 +24,7 @@ const ACTIONS: readonly Action[] = [
   { k: "loom", n: "Cancel Loom Business", amt: 168, m: "Two sign-ins in ninety days" },
   { k: "figma", n: "Release four Figma seats", amt: 480, m: "Untouched since April" },
   { k: "notion", n: "Move Notion down to Plus", amt: 432, m: "Nine of eighteen seats in use" },
-  { k: "datadog", n: "Better terms on Datadog", amt: 2244, m: "Renews on 26 August" },
+  { k: "datadog", n: "Move Datadog to annual", amt: 2244, m: "Renews on 26 August" },
 ];
 
 const CAPS = [0, 250, 600, 1000, 2500] as const;
@@ -33,8 +33,8 @@ type Verdict = { tone: "auto" | "ask" | "stop"; label: string };
 
 function resolve(a: Action, envelope: boolean, cap: number, frozen: boolean): Verdict {
   if (frozen) return { tone: "stop", label: "Frozen" };
-  if (!envelope) return { tone: "ask", label: "Waiting on you" };
-  if (a.amt <= cap) return { tone: "auto", label: "Settles on its own" };
+  if (!envelope) return { tone: "ask", label: "Needs your approval" };
+  if (a.amt <= cap) return { tone: "auto", label: "Acts inside policy" };
   return { tone: "stop", label: "Stopped — over your ceiling" };
 }
 
@@ -70,11 +70,13 @@ export function Console() {
     <div className="panel up" data-d="120">
       <div className="policy-head">
         <div>
-          <span className="policy-kicker"><i /> Live policy</span>
-          <p>Every limit is yours. Changes apply immediately.</p>
+          <span className="policy-kicker">
+            <i /> Live policy
+          </span>
+          <p>Your rules become enforceable immediately.</p>
         </div>
         <span className={`policy-state${frozen ? " frozen" : ""}`}>
-          {frozen ? "Everything frozen" : envelope ? "Authority active" : "Approval only"}
+          {frozen ? "Everything frozen" : envelope ? "Mandate active" : "Approval required"}
         </span>
       </div>
 
@@ -83,8 +85,8 @@ export function Console() {
           <div className="ctl">
             <div className="lab">
               <div>
-                <div className="nm">Act within your envelope</div>
-                <div className="hint">Off means Renewly drafts the move and waits for you.</div>
+                <div className="nm">Act inside this envelope</div>
+                <div className="hint">Off means Renewly prepares every move and waits for you.</div>
               </div>
               <Switch
                 on={envelope}
@@ -122,7 +124,11 @@ export function Console() {
                 <div className="nm">Freeze all activity</div>
                 <div className="hint">Pending actions stop and live credentials expire.</div>
               </div>
-              <Switch on={frozen} onToggle={() => setFrozen((v) => !v)} label="Freeze all activity" />
+              <Switch
+                on={frozen}
+                onToggle={() => setFrozen((v) => !v)}
+                label="Freeze all activity"
+              />
             </div>
           </div>
         </div>
@@ -131,40 +137,44 @@ export function Console() {
           <div className="results-head">
             <div>
               <span>Under this policy</span>
-              <strong>What happens next</strong>
+              <strong>Decisions under this mandate</strong>
             </div>
-            <small>{autoCount} of {ACTIONS.length} settle alone</small>
+            <small>
+              {autoCount} of {ACTIONS.length} inside policy
+            </small>
           </div>
 
           <div className="action-list">
-          {ACTIONS.map((a, i) => (
-            <div className="act" key={a.k}>
-              <div>
-                <div className="nm">{a.n}</div>
-                <div className="mt">
-                  {a.m} · {money(a.amt)} a year
+            {ACTIONS.map((a, i) => (
+              <div className="act" key={a.k}>
+                <div>
+                  <div className="nm">{a.n}</div>
+                  <div className="mt">
+                    {a.m} · {money(a.amt)} a year
+                  </div>
+                </div>
+                <div className={`v ${verdicts[i].tone}`}>
+                  <i />
+                  {verdicts[i].label}
                 </div>
               </div>
-              <div className={`v ${verdicts[i].tone}`}><i />{verdicts[i].label}</div>
-            </div>
-          ))}
+            ))}
           </div>
 
           <div className="tally" aria-live="polite" aria-atomic="true">
-            <span>Annual spend returned automatically</span>
+            <span>Annual recurring value inside policy</span>
             <b>{money(auto)}</b>
             <small>
               {frozen
                 ? "Nothing moves while activity is frozen."
                 : auto
-                  ? "Across the actions currently within your envelope."
-                  : "Every action currently waits for you."}
+                  ? "Across the actions this mandate currently allows."
+                  : "Every action currently needs your approval."}
             </small>
           </div>
         </div>
       </div>
     </div>
-
   );
 }
 
