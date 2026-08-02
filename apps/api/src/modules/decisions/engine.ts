@@ -457,6 +457,30 @@ export function decide(input: EngineInput): EngineOutcome {
     inputsUsed.push(`catalog.term_switch_saving=${annualBillingSaving}`);
   }
 
+  /*
+   * Duplicate detection: a peer subscription resolves to a catalog tool in the
+   * same category, so the workspace pays twice for one job. The catalog is the
+   * authority on category — `jobCategory` is nullable free text. Only the
+   * pricier half of a pair ever fires, so the two decisions for a pair can
+   * never both recommend dropping.
+   */
+  let duplicate: { peerId: string; tool: CatalogTool } | null = null;
+  if (catalogTool) {
+    for (const peer of input.peers) {
+      const peerTool = findCatalogTool(peer.merchantName);
+      if (!peerTool || peerTool.category !== catalogTool.category) continue;
+      const peerAnnual = annualize(
+        normalizeAmount(peer.amount, currency),
+        peer.billingCycle,
+        currency,
+      );
+      if (cmp(doNothingAnnual, peerAnnual, currency) > 0) {
+        duplicate = { peerId: peer.id, tool: peerTool };
+        break;
+      }
+    }
+  }
+
   /* Rule ordering: cancel beats rightsize beats switch beats term beats renew. */
   let recommendation: Recommendation;
   let recommendedAnnual: string;
@@ -464,6 +488,8 @@ export function decide(input: EngineInput): EngineOutcome {
   let seatsTarget: number | null = null;
   let termTarget: BillingCycle | null = null;
   let confidence: number;
+  /** Set when the duplicate rule fires, for the diagnosis and the audit trail. */
+  let duplicateOf: string | null = null;
 
   if (staleUsage) {
     /* Rule 5 — unused for 30+ days leans cancel, regardless of criticality. */
@@ -495,6 +521,23 @@ export function decide(input: EngineInput): EngineOutcome {
     reasons.push(
       `The invoice bills ${seatsTotal} seats and this workspace is set to ${teamSize}. Dropping to ${teamSize} matches the plan to the team on record.`,
     );
+  } else if (duplicate) {
+    /*
+     * Rule 6c — the workspace already pays for another tool that covers the
+     * same job. More specific than any budget reasoning, so it outranks it.
+     * Dropping a duplicate is a cancellation the user performs in the vendor's
+     * own UI and then attests — it moves no money, so this deliberately emits
+     * `cancel` rather than routing a "switch" through the payment rail.
+     */
+    recommendation = "cancel";
+    switchTarget = duplicate.tool;
+    duplicateOf = duplicate.tool.name;
+    recommendedAnnual = "0.00";
+    confidence = 0.8;
+    reasons.push(
+      `You already pay for ${duplicate.tool.name} in the same category. ${sub_.merchantName} is ${doNothingAnnual} ${currency} a year on top.`,
+    );
+    inputsUsed.push(`derived.duplicate_of=${duplicate.peerId}`);
   } else if (sub_.criticality === "must_keep") {
     /* Rule 2 — must_keep: never cancel, but a cheaper term is still fair game. */
     if (cheapest && (budgetExceeded || categoryBudgetExceeded)) {
@@ -617,6 +660,7 @@ export function decide(input: EngineInput): EngineOutcome {
       annualBillingSaving,
       daysToRenewal,
       doNothingAnnual,
+      duplicateOf,
       experimentalAndExpensive: isMarkedExperimentalAndExpensive(sub_, policy),
       overBudget: budgetExceeded || categoryBudgetExceeded,
       spendCeiling: policy.spendCeiling,
@@ -671,6 +715,7 @@ function buildDiagnosis(
     annualBillingSaving: string;
     daysToRenewal: number | null;
     doNothingAnnual: string;
+    duplicateOf: string | null;
     experimentalAndExpensive: boolean;
     overBudget: boolean;
     spendCeiling: string | null;
@@ -681,6 +726,11 @@ function buildDiagnosis(
 
   switch (recommendation) {
     case "cancel":
+      // The duplicate rule sets this only when it fired, so it names the real
+      // rationale rather than whichever fallback happens to match.
+      if (facts.duplicateOf) {
+        return `You already pay for ${facts.duplicateOf}, which covers the same job, at ${annual}.`;
+      }
       if (facts.unusedDays !== null) {
         return `Your note says no use for about ${facts.unusedDays} days, at ${annual}.`;
       }
@@ -752,7 +802,12 @@ export function deterministicNarrative(
     snooze: "Leave",
   };
 
-  const target = outcome.switchTarget ? ` to ${outcome.switchTarget.name}` : "";
+  // A cancel with a switchTarget is the duplicate rule: the target is the tool
+  // being kept, not one being moved to, so "Cancel X to Y" would misread.
+  const target =
+    outcome.switchTarget && outcome.recommendation !== "cancel"
+      ? ` to ${outcome.switchTarget.name}`
+      : "";
   const headline =
     outcome.savingsAnnual === "0.00"
       ? `${verb[outcome.recommendation]} ${subscription.merchantName} at ${outcome.doNothingAnnual} ${currency} a year`

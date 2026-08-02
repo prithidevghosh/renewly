@@ -197,6 +197,9 @@ describe("LLM narrative", () => {
     const fakeLlm: LlmClient = {
       available: true,
       modelId: "test-model",
+      async chatReply() {
+        return null;
+      },
       async extractRenewalFromText() {
         return null;
       },
@@ -240,6 +243,9 @@ describe("LLM narrative", () => {
     setLlmClient({
       available: true,
       modelId: "test-model",
+      async chatReply() {
+        return null;
+      },
       async extractRenewalFromText() {
         return null;
       },

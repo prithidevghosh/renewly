@@ -679,3 +679,153 @@ describe("deterministicNarrative", () => {
     expect(deterministicNarrative(outcome, sub).headline).toContain("Rightsize");
   });
 });
+
+describe("rule 6c: duplicate detection", () => {
+  /** The canonical pair: Coda and Notion both cover the docs job. */
+  const codaSubscription = (overrides: Partial<EngineSubscription> = {}) =>
+    subscription({
+      merchantName: "Coda",
+      amount: "47.00",
+      jobCategory: "docs",
+      ...overrides,
+    });
+
+  const notionPeer = {
+    id: "sub_notion",
+    amount: "20.00",
+    billingCycle: "monthly" as const,
+    jobCategory: "docs" as const as string | null,
+    merchantName: "Notion",
+  };
+
+  it("1. fires on the pricier half of a same-category pair", () => {
+    const outcome = decide(
+      input({ subscription: codaSubscription(), peers: [notionPeer] }),
+    );
+
+    expect(outcome.recommendation).toBe("cancel");
+    expect(outcome.switchTarget?.slug).toBe("notion-plus");
+    expect(outcome.confidence).toBe(0.8);
+    // Dropping a duplicate is attested in the vendor's UI; no money moves.
+    expect(outcome.amountDue).toBe("0.00");
+    expect(outcome.reasons.some((r) => r.includes("already pay for Notion Plus"))).toBe(true);
+  });
+
+  it("2. never fires on the cheaper half, so a pair cannot both be dropped", () => {
+    const outcome = decide(
+      input({
+        subscription: subscription({
+          merchantName: "Notion",
+          amount: "20.00",
+          jobCategory: "docs",
+          criticality: "nice_to_have",
+        }),
+        peers: [
+          {
+            id: "sub_coda",
+            amount: "47.00",
+            billingCycle: "monthly",
+            jobCategory: "docs",
+            merchantName: "Coda",
+          },
+        ],
+      }),
+    );
+
+    expect(outcome.recommendation).not.toBe("cancel");
+    expect(outcome.inputsUsed.some((i) => i.startsWith("derived.duplicate_of"))).toBe(false);
+  });
+
+  it("3. does not fire across categories", () => {
+    const outcome = decide(
+      input({
+        subscription: codaSubscription(),
+        peers: [
+          {
+            id: "sub_figma",
+            amount: "15.00",
+            billingCycle: "monthly",
+            jobCategory: "design",
+            merchantName: "Figma Professional",
+          },
+        ],
+      }),
+    );
+
+    expect(outcome.recommendation).not.toBe("cancel");
+    expect(outcome.inputsUsed.some((i) => i.startsWith("derived.duplicate_of"))).toBe(false);
+  });
+
+  it("4. does not fire, and does not throw, when the peer is off-catalog", () => {
+    const outcome = decide(
+      input({
+        subscription: codaSubscription(),
+        peers: [
+          {
+            id: "sub_obscure",
+            amount: "5.00",
+            billingCycle: "monthly",
+            jobCategory: "docs",
+            merchantName: "Obscure Docs Tool XQ",
+          },
+        ],
+      }),
+    );
+
+    expect(outcome.inputsUsed.some((i) => i.startsWith("derived.duplicate_of"))).toBe(false);
+  });
+
+  it("5. does not fire with no peers at all", () => {
+    const outcome = decide(input({ subscription: codaSubscription(), peers: [] }));
+
+    expect(outcome.inputsUsed.some((i) => i.startsWith("derived.duplicate_of"))).toBe(false);
+  });
+
+  it("6. stale usage still wins: an unused duplicate is cancelled for non-use", () => {
+    const outcome = decide(
+      input({
+        subscription: codaSubscription({ usageNote: "Unused for 60 days." }),
+        peers: [notionPeer],
+      }),
+    );
+
+    expect(outcome.recommendation).toBe("cancel");
+    expect(outcome.inputsUsed).toContain("derived.unused_days=60");
+    // The more specific non-use rule fired, not the duplicate rule.
+    expect(outcome.inputsUsed.some((i) => i.startsWith("derived.duplicate_of"))).toBe(false);
+  });
+
+  it("7. outranks budget pressure: a duplicate is a more specific finding", () => {
+    const outcome = decide(
+      input({
+        subscription: codaSubscription(),
+        policy: policy({ aiMonthlyBudget: "30.00" }),
+        peers: [notionPeer],
+      }),
+    );
+
+    expect(outcome.policyFlags).toContain("BUDGET_EXCEEDED");
+    expect(outcome.recommendation).toBe("cancel");
+    expect(outcome.inputsUsed.some((i) => i.startsWith("derived.duplicate_of"))).toBe(true);
+    expect(outcome.recommendation).not.toBe("switch_vendor");
+  });
+
+  it("8. savings equal the subject's full annual cost", () => {
+    const outcome = decide(
+      input({ subscription: codaSubscription(), peers: [notionPeer] }),
+    );
+
+    expect(outcome.recommendedAnnual).toBe("0.00");
+    expect(outcome.savingsAnnual).toBe(outcome.doNothingAnnual);
+    expect(outcome.savingsAnnual).toBe("564.00");
+  });
+
+  it("9. records which peer it deduplicated against", () => {
+    const outcome = decide(
+      input({ subscription: codaSubscription(), peers: [notionPeer] }),
+    );
+
+    expect(outcome.inputsUsed).toContain("derived.duplicate_of=sub_notion");
+    expect(outcome.diagnosis).toContain("already pay for Notion Plus");
+  });
+});
