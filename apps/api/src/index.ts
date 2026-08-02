@@ -5,6 +5,7 @@ import { runMigrations } from "./db/migrate.js";
 import { env } from "./env.js";
 import { logger } from "./lib/logger.js";
 import { seedMerchants } from "./modules/merchants/service.js";
+import { reapStaleSessions } from "./modules/agent/runner.js";
 import { startWorker, stopWorker } from "./modules/workers/runner.js";
 
 async function main(): Promise<void> {
@@ -25,14 +26,35 @@ async function main(): Promise<void> {
   // WORKER_ENABLED set to false.
   startWorker(handle.db);
 
-  // A key is configured but nothing will be sent: the single most confusing
-  // state this service can boot into, so it is said out loud rather than
-  // inferred from an absence of mail.
-  if (env.MAIL_OUTBOUND_MODE === "mock" && env.MAIL_OUTBOUND_API_KEY) {
+  // An agent run lives in the process driving it, so a restart abandons any
+  // that were mid-flight. Close them now rather than leave a terminal
+  // reattaching to a run that will never emit another event.
+  await reapStaleSessions(handle.db);
+
+  // Say which integrations are switched off, on every boot. A disabled feature
+  // is a deliberate state, but it is still one that makes calls fail, and
+  // reading it off the startup log beats deducing it from a 503 later.
+  const disabled = (
+    [
+      ["OAUTH_MODE", env.OAUTH_MODE],
+      ["MAILBOX_MODE", env.MAILBOX_MODE],
+      ["PRAVA_MODE", env.PRAVA_MODE],
+      ["LINQ_MODE", env.LINQ_MODE],
+      ["MAIL_MODE", env.MAIL_MODE],
+      ["MAIL_OUTBOUND_MODE", env.MAIL_OUTBOUND_MODE],
+      ["CHECKOUT_ADAPTER_MODE", env.CHECKOUT_ADAPTER_MODE],
+    ] as const
+  )
+    .filter(([, mode]) => mode === "disabled")
+    .map(([name]) => name);
+
+  if (disabled.length > 0) {
     logger.warn(
-      { mailOutboundMode: "mock", from: env.MAIL_FROM },
-      "MAIL_OUTBOUND_API_KEY is set but MAIL_OUTBOUND_MODE=mock — outbound mail is captured " +
-        "in memory and no message will reach anyone. Set MAIL_OUTBOUND_MODE=live to send.",
+      { disabled },
+      `${disabled.length} integration(s) are switched off and will return ` +
+        "FEATURE_DISABLED: " +
+        disabled.join(", ") +
+        ". Supply the credentials and set them live to enable.",
     );
   }
 
@@ -43,7 +65,6 @@ async function main(): Promise<void> {
         driver: handle.kind,
         pravaMode: env.PRAVA_MODE,
         linqMode: env.LINQ_MODE,
-        whatsappMode: env.WHATSAPP_MODE,
         mailMode: env.MAIL_MODE,
         mailOutboundMode: env.MAIL_OUTBOUND_MODE,
         mailFrom: env.MAIL_FROM,
