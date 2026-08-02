@@ -48,17 +48,37 @@ function portInUse(port) {
 const env = { ...readEnvFile(), ...process.env };
 
 if (await portInUse(PORT)) {
+  // pnpm wraps a non-zero exit in ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL, which
+  // reads like a crash. Say plainly that nothing is broken, and name the
+  // process so the fix is one copy-paste rather than a hunt.
+  let owner = "";
+  try {
+    const { execSync } = await import("node:child_process");
+    const pid = execSync(`lsof -ti:${PORT}`, { stdio: ["ignore", "pipe", "ignore"] })
+      .toString()
+      .trim()
+      .split("\n")[0];
+    if (pid) owner = `  It is process ${pid}.\n`;
+  } catch {
+    // lsof is missing or found nothing; the generic advice below still stands.
+  }
+
   console.error(
     [
       "",
-      `  The API is already running on port ${PORT}.`,
+      "  ─────────────────────────────────────────────────────────────",
+      `  Nothing is broken. The API is already running on port ${PORT},`,
+      "  so this second copy stopped before it could start.",
+      "  ─────────────────────────────────────────────────────────────",
       "",
-      "  Starting a second instance would point two processes at the same PGlite",
-      "  directory, which corrupts it. Stop the other one first:",
+      owner + "  Two instances would point at the same PGlite directory and",
+      "  corrupt it, so only one may run at a time.",
       "",
-      `    lsof -ti:${PORT} | xargs kill`,
+      "  Use the one already running, or replace it:",
       "",
-      "  Or run this one elsewhere:  PORT=4001 pnpm dev",
+      `    lsof -ti:${PORT} | xargs kill && pnpm --filter @renewly/api dev`,
+      "",
+      `  Or run this copy beside it:  PORT=4001 pnpm --filter @renewly/api dev`,
       "",
     ].join("\n"),
   );
