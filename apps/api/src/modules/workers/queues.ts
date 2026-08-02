@@ -1,6 +1,7 @@
 import { and, asc, eq, lte } from "drizzle-orm";
 import { getDb, type Database } from "../../db/client.js";
 import { jobs, type Job, type JobType } from "../../db/schema.js";
+import { AppError } from "../../lib/errors.js";
 import { newId } from "../../lib/id.js";
 import { logger } from "../../lib/logger.js";
 
@@ -102,10 +103,30 @@ export async function failJob(
     })
     .where(eq(jobs.id, job.id));
 
-  logger.warn(
-    { jobId: job.id, type: job.type, attempts: job.attempts, exhausted },
-    "job attempt failed",
-  );
+  /*
+   * The reason goes in the log line, not only in `lastError`.
+   *
+   * This used to log the job id, type and attempt count and nothing else, so a
+   * production failure read as "job attempt failed" five times and the only
+   * copy of the cause sat in a database column — reachable, on Railway, by
+   * opening a shell against Postgres. An adapter that already reports which
+   * HTTP status and which provider error code it got deserves better than
+   * that, so the message and any AppError details ride along.
+   *
+   * Exhaustion is an error rather than a warning: the retries are over and the
+   * proposal is never going out, which is exactly the line worth alerting on.
+   */
+  const detail = {
+    jobId: job.id,
+    type: job.type,
+    attempts: job.attempts,
+    exhausted,
+    err: message,
+    ...(error instanceof AppError ? { code: error.code, ...error.details } : {}),
+  };
+
+  if (exhausted) logger.error(detail, "job failed, no attempts left");
+  else logger.warn(detail, "job attempt failed, will retry");
 }
 
 export async function listJobs(
