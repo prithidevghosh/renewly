@@ -159,10 +159,34 @@ describe("confirmation gate", () => {
 describe("settings", () => {
   it("reads defaults", async () => {
     const response = await client.get<{
-      settings: { approvalMode: string; spendCeiling: string; killSwitch: boolean };
+      settings: {
+        approvalMode: string;
+        spendCeiling: string;
+        killSwitch: boolean;
+        teamSize: number;
+        primaryChannel: string;
+      };
     }>("/v1/settings");
     expect(response.body.settings.approvalMode).toBe("always_ask");
     expect(response.body.settings.spendCeiling).toBe("50.00");
+    // The solo-founder assumption, so a multi-seat invoice can be reasoned about
+    // on arrival without asking anyone how many people there are.
+    expect(response.body.settings.teamSize).toBe(1);
+    expect(response.body.settings.primaryChannel).toBe("simulator");
+  });
+
+  it("patches the team size, so the seat rule can be told it is wrong", async () => {
+    const response = await client.patch<{ settings: { teamSize: number } }>("/v1/settings", {
+      teamSize: 4,
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.settings.teamSize).toBe(4);
+
+    const readBack = await client.get<{ settings: { teamSize: number } }>("/v1/settings");
+    expect(readBack.body.settings.teamSize).toBe(4);
+
+    await client.patch("/v1/settings", { teamSize: 1 });
   });
 
   it("patches budget, ceiling and mode, and bumps the policy version", async () => {

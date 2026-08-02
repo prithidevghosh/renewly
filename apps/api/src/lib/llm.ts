@@ -151,6 +151,13 @@ const EXPLAIN_SYSTEM_PROMPT = [
   "Alternatives must be chosen ONLY from the provided candidate list, using the",
   "provided annual_cost values verbatim. Never invent a tool, a price, or another",
   "subscription the user might have. Write plainly, no marketing language, no emoji.",
+  // The product reads no vendor telemetry. usage_note is the user's own words and
+  // is usually null, so any claim about how much a tool is used has to come from
+  // there or not be made at all.
+  "There is NO usage telemetry. When usage_note is null you must not say or imply",
+  "the user rarely uses, barely uses, or has abandoned the tool, and you must not",
+  "describe any seat as dead, idle or unused. State the invoice and policy reasons",
+  "given in `reasons` instead. Never name or refer to an individual seat holder.",
 ].join(" ");
 
 class OpenAiLlmClient implements LlmClient {

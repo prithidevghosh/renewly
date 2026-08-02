@@ -25,6 +25,7 @@ const patchSchema = z
     spendCeiling: decimalString.nullable().optional(),
     killSwitch: z.boolean().optional(),
     categoryCeilings: z.record(z.string().min(1), decimalString).optional(),
+    teamSize: z.number().int().min(1).max(10_000).optional(),
     quietHours: quietHoursSchema.nullable().optional(),
     primaryChannel: z.enum(["imessage", "whatsapp", "simulator"]).optional(),
   })
@@ -65,6 +66,7 @@ settingsRoutes.patch("/", async (c) => {
       Object.entries(input.categoryCeilings).map(([k, v]) => [k, normalizeAmount(v, currency)]),
     );
   }
+  if (input.teamSize !== undefined) patch.teamSize = input.teamSize;
   if (input.quietHours !== undefined) patch.quietHoursJson = input.quietHours;
   if (input.primaryChannel !== undefined) patch.primaryChannel = input.primaryChannel;
 

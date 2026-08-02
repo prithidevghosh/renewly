@@ -8,6 +8,7 @@ export interface SettingsDto {
   spendCeiling: string | null;
   killSwitch: boolean;
   categoryCeilings: Record<string, string>;
+  teamSize: number;
   quietHours: QuietHours | null;
   primaryChannel: WorkspaceSettings["primaryChannel"];
   policyVersion: number;
@@ -33,6 +34,7 @@ export function serializeSettings(settings: WorkspaceSettings): SettingsDto {
         normalizeAmount(value, currency),
       ]),
     ),
+    teamSize: settings.teamSize,
     quietHours: settings.quietHoursJson ?? null,
     primaryChannel: settings.primaryChannel,
     policyVersion: settings.policyVersion,

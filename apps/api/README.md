@@ -51,6 +51,12 @@ SEED_DEMO_FLOW=true pnpm run seed
 
 ## The loop
 
+The hero flow, and the one [`message-pay-happy-path.test.ts`](e2e/message-pay-happy-path.test.ts)
+drives end to end: **renewal mail → decision → message → APPROVE → Prava pay → receipt**. The user
+is asked exactly once, and only to approve. Detection, decision and execution are the agent's work;
+that e2e deliberately creates its subscription with no usage note and no seat activity, so a
+regression that reintroduces an interview step fails the build.
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -155,19 +161,31 @@ demoable without a phone.
 
 ## Honest boundaries
 
-Three things this backend does **not** do, stated plainly because the alternative is a demo that
+Four things this backend does **not** do, stated plainly because the alternative is a demo that
 lies:
+
+**No usage data is read from any vendor.** V1 has no telemetry, no OAuth into anyone's admin API and
+no seat census. Decisions are made from **invoice + policy + catalog** and nothing else. `usage_note`
+and `seats_active` are optional enrichments the *user* may supply; they are usually null, and the
+engine is required to reach a decision without them. A message may describe a tool as unused only
+when the user's own note said so — [`buildDiagnosis`](src/modules/decisions/engine.ts) names the
+invoice or policy reason in every other case, and `composer.test.ts` asserts it.
+
+The corollary is that the agent never interviews you. There is no "how often do you use this?" step
+before a decision exists. The agent decides, explains the counterfactual, and asks for **one**
+approval.
 
 **Merchant settlement is ours.** Prava mints a real, usable one-time credential. Settling it
 against Anthropic or Midjourney would mean driving their billing portals, which V1 does not do.
 The credential is charged against a Renewly-controlled test merchant. The rail is real (or mocked
 per env); the merchant leg is not.
 
-**Cancellation and seat changes are performed by the user.** There is no cancellation API for
-these vendors. `cancel/start` returns a checklist and a curated portal URL and moves the
-subscription to `pending_cancel`. The thread says *"I cannot do this one for you — there is no
-API"*. Nothing reaches the ledger as `realized` until the user replies DONE, and the audit event
-records `automated: false`.
+**Cancellation and seat changes are performed by the user.** There is no universal cancellation API,
+and this backend does not pretend to have one. `cancel/start` returns a checklist and a curated
+portal URL and moves the subscription to `pending_cancel`. The thread says *"I cannot do this one
+for you — there is no API"*. Nothing reaches the ledger as `realized` until the user replies DONE,
+and the audit event records `automated: false`. Cancel is a **guided** flow, which is why the hero
+demo is the pay path rather than the cancel path.
 
 **No third-party integration has been run against a live key.** Every outbound client — Prava, Linq,
 WhatsApp, Resend — is written to the vendor's published reference, and each one's request and response
@@ -206,17 +224,40 @@ opportunity is never counted as both a claim and a result. `GET /v1/savings/summ
 every number; the LLM writes only the headline and narrative, and any alternative it proposes is
 discarded unless it matches the curated catalog at the catalog price.
 
+**It is callable with an invoice, a policy and nothing else.** `usage_note` and `seats_active` are
+optional. Rules 2 and 3 below are the only ones that read them, and when they are null the engine
+falls through to rules that read the invoice, the policy and the catalog.
+
 Six actions, in evaluation order:
 
-| Rule | Action |
-|---|---|
-| 1. Kill switch | flags the package; decisions still generate, only spending stops |
-| 2. Unused 30+ days | `cancel` |
-| 3. Idle seats (`seatsActive < seatsTotal`) | `rightsize_seats` with a seat target |
-| 4. `must_keep` | `switch_term` if annual is cheaper, else `renew`; never cancels |
-| 5. `experimental` above the ceiling | `switch_vendor`, or `cancel` if nothing is cheaper |
-| 6. Over budget or category ceiling | `switch_vendor` → `cancel` → `rightsize_seats` |
-| 7. Healthy and renewal 60+ days out | `snooze` — never proposed, so the agent stays quiet |
+| Rule | Action | Needs usage? |
+|---|---|---|
+| 1. Kill switch | flags the package; decisions still generate, only spending stops | no |
+| 2. Usage note says unused 30+ days | `cancel` | yes — user-supplied only |
+| 3. Idle seats (`seatsActive < seatsTotal`) | `rightsize_seats` at the active-seat count | yes — user-supplied only |
+| 4. Invoice bills more seats than `team_size` | `rightsize_seats` down to `team_size` | **no** |
+| 5. `must_keep` | `switch_term` if annual is cheaper, else `renew`; never cancels | no |
+| 6. `experimental` above the ceiling | `switch_vendor`, or `cancel` if nothing is cheaper | no |
+| 7. Over budget or category ceiling | `switch_vendor` → `cancel` → `rightsize_seats` → `cancel` | no |
+| 8. Annual term is cheaper | `switch_term` | no |
+| 9. Nothing flagged and renewal 60+ days out | `snooze` — never proposed, so the agent stays quiet | no |
+
+Rule 4 is the seat rule that works from a bare invoice: "this invoice bills 4 seats, this workspace
+is set to 1". It is arithmetic on the invoice against `workspace_settings.team_size` (default `1`,
+the solo-founder assumption). It never claims a *particular* seat is dead, because V1 has no
+per-user data and V1 does not guess about people.
+
+The four ways V1 is allowed to call something overspend are exported predicates, so a test can pin
+each one independently of the rule chain that consumes it:
+
+```ts
+isOverCategoryCeiling(sub, policy, peers)      // category run rate vs its ceiling
+isExpensivePlanVsCatalog(sub, catalog)         // { cheaper, diff } vs the curated catalog
+isAnnualCheaperThanMonthly(sub, catalog)       // plan maths, monthly vs annual term
+isMarkedExperimentalAndExpensive(sub, policy)  // your tag + your ceiling
+```
+
+None of them reads usage. "You barely use this" is not an available reason unless you wrote it down.
 
 `renew`, `switch_term` and `switch_vendor` move money. `cancel` and `rightsize_seats` are attested
 by the user. `snooze` does nothing.
@@ -297,7 +338,7 @@ string. Timestamps are ISO 8601 UTC. Lists take `?cursor=&limit=`.
 | `POST` | `/v1/contact` | Public contact form; mails the message to `CONTACT_NOTIFY_TO` |
 | `POST` | `/v1/auth/signup`, `/login`, `/logout` | Credentials |
 | `GET` | `/v1/me` | User, workspace, settings |
-| `GET` `PATCH` | `/v1/settings` | Budget, ceiling, approval mode, quiet hours, primary channel |
+| `GET` `PATCH` | `/v1/settings` | Budget, ceiling, approval mode, `teamSize`, quiet hours, primary channel |
 | `POST` | `/v1/settings/kill-switch` | `{ enabled }` |
 | `POST` | `/v1/settings/simulate` | What would be auto/ask/blocked under a different policy |
 | `GET` | `/v1/channels` | Connected channels |
@@ -473,7 +514,7 @@ ignore quiet hours: the user is mid-flow.
 ## Testing
 
 ```bash
-pnpm test        # 448 unit + integration
+pnpm test        # 483 unit + integration
 pnpm run test:e2e   # 90 across 8 journeys
 ```
 
@@ -486,6 +527,12 @@ tests; the harness drives `flushOutbox()` explicitly so delivery is deterministi
 same-state), intent parsing including negation and tapbacks, every composed message, the decision
 rule matrix, the policy guard, the checkout adapter, the Prava mock, merchant resolution, content
 hashing, idempotency under concurrency.
+
+Two groups are there specifically to keep the product honest. `decide — without usage or seat data`
+runs the whole rule matrix with `usage_note` and `seats_active` null and asserts a real decision
+comes out of each one, including that changing only the ceiling flips the answer. `honesty about
+what is known` drives the engine into the composer and asserts the message a phone would receive
+never claims the user barely uses something, never calls a seat dead, and never names a person.
 
 **Integration** — auth and workspace isolation, subscriptions and the confidence gate, email/file/
 CSV intake, decisions and supersession, the pay path, channel connect and inbound intents, expiry,
@@ -503,6 +550,17 @@ duplicate submission, a failing mail provider and a retry that resumes the loop.
 | `mail-inbound` | plus-address routing, duplicate detection, price change re-gating, forged From header |
 | `failure-prava-decline` | decline, abandoned iframe, refused mandate, slow collection, recovery |
 | `renewal-happy-path`, `failure-paths` | the direct web pay path, retained from V1 |
+
+**Email fixtures** (`fixtures/emails/`) are real-shaped renewal mail, and most of them carry no seat
+or usage information at all — because most renewal mail does not:
+
+| Fixture | What it exercises |
+|---|---|
+| `claude-pro-renewal` | amount, cycle and date only. No seats, no usage. Drives the hero pay path |
+| `midjourney-receipt` | a receipt plus a future price increase. No seats, no usage |
+| `figma-seats-no-activity` | 4 seats at $144, **no** activity data — the rule-4 rightsize case |
+| `figma-seats-renewal` | 5 seats *with* "2 in use" stated by the vendor, for the idle-seat path |
+| `figma-annual-renewal` | 3 seats on an annual cycle, so annualisation is not double-counted |
 
 ---
 

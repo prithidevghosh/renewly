@@ -10,6 +10,10 @@ import { ApiClient, createHarness, expectErrorCode, type TestHarness } from "../
  *
  * Each step depends on the last, so the assertions run in order in a single
  * describe rather than as independent cases.
+ *
+ * The subscription is deliberately created with no usage note and no seat
+ * activity, because that is all a renewal email actually gives you. The hero
+ * demo has to work from the invoice, the policy and the catalog alone.
  */
 
 let harness: TestHarness;
@@ -108,7 +112,7 @@ describe("message to payment, end to end", () => {
       nextRenewalAt: response.body.draft.nextRenewalAt,
       criticality: "must_keep",
       jobCategory: "ai",
-      usageNote: "Used daily for drafting and code review.",
+      // No usageNote, no seatsActive: the decision must stand on the invoice.
       sourceType: "email",
       // Deliberately below the 0.7 gate, to prove confirmation is enforced.
       fieldConfidence: { ...response.body.draft.fieldConfidence, next_renewal_at: 0.55 },
@@ -155,6 +159,12 @@ describe("message to payment, end to end", () => {
     expect(pkg.counterfactuals.recommended.annual_cost).toBe("204.00");
     expect(pkg.counterfactuals.recommended.savings_vs_do_nothing).toBe("36.00");
     expect(pkg.inputs_used).toContain("subscription.criticality=must_keep");
+
+    // The decision must be attributable to the invoice, the policy and the
+    // catalog — nothing here came from usage or seat activity.
+    expect(pkg.inputs_used.some((i) => i.startsWith("subscription.usage_note"))).toBe(false);
+    expect(pkg.inputs_used.some((i) => i.startsWith("subscription.seats_active"))).toBe(false);
+    expect(pkg.diagnosis).not.toMatch(/barely|rarely|no recorded use|unused/i);
 
     state.decisionId = response.body.decision.id;
     state.approvalId = response.body.approval.id;

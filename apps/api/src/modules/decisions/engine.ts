@@ -6,7 +6,6 @@ import {
   fromMinor,
   mul,
   normalizeAmount,
-  percentOf,
   sub,
   sum,
   toMinor,
@@ -121,7 +120,18 @@ export interface EnginePolicy {
   categoryCeilings: Record<string, string>;
   currency: string;
   policyVersion: number;
+  /**
+   * Seats the workspace actually needs. Optional so callers that predate the
+   * field still work; absent means the solo-founder default of one.
+   */
+  teamSize?: number;
 }
+
+/** The solo-founder assumption, applied whenever nothing better is known. */
+export const DEFAULT_TEAM_SIZE = 1;
+
+export const effectiveTeamSize = (policy: EnginePolicy): number =>
+  Math.max(1, policy.teamSize ?? DEFAULT_TEAM_SIZE);
 
 export interface EngineInput {
   subscription: EngineSubscription;
@@ -411,6 +421,20 @@ export function decide(input: EngineInput): EngineOutcome {
     inputsUsed.push(`subscription.seats_active=${activeSeats}`);
   }
 
+  /*
+   * No activity data at all, but the invoice itself bills more seats than the
+   * workspace says it has people. That is a claim about the invoice and the
+   * policy, not about anybody's login history, so it is fair to act on — and it
+   * is deliberately never expressed as "seat X is dead".
+   */
+  const teamSize = effectiveTeamSize(policy);
+  inputsUsed.push(`policy.team_size=${teamSize}`);
+  const oversizedVsTeam =
+    activeSeats === null && seatsTotal > teamSize && sub_.criticality !== "must_keep";
+  if (oversizedVsTeam) {
+    inputsUsed.push("derived.seats_exceed_team_size=true");
+  }
+
   const aboveCeiling = policy.spendCeiling
     ? cmp(amount, policy.spendCeiling, currency) > 0
     : false;
@@ -457,6 +481,19 @@ export function decide(input: EngineInput): EngineOutcome {
     confidence = sub_.seatsActive !== null ? 0.86 : 0.72;
     reasons.push(
       `${idleSeats} of ${seatsTotal} seats are unused; dropping to ${activeSeats} keeps everyone working.`,
+    );
+  } else if (oversizedVsTeam) {
+    /*
+     * Rule 6b — the invoice bills more seats than the workspace has people, and
+     * nothing tells us who logs in. The claim is arithmetic on the invoice, so
+     * confidence stays low and the message asks rather than asserts.
+     */
+    recommendation = "rightsize_seats";
+    seatsTarget = teamSize;
+    recommendedAnnual = perSeatAnnual(doNothingAnnual, seatsTotal, teamSize, currency);
+    confidence = 0.6;
+    reasons.push(
+      `The invoice bills ${seatsTotal} seats and this workspace is set to ${teamSize}. Dropping to ${teamSize} matches the plan to the team on record.`,
     );
   } else if (sub_.criticality === "must_keep") {
     /* Rule 2 — must_keep: never cancel, but a cheaper term is still fair game. */
@@ -515,13 +552,27 @@ export function decide(input: EngineInput): EngineOutcome {
       recommendedAnnual = "0.00";
       confidence = 0.66;
       reasons.push("Over budget with no cheaper equivalent and the tool is only nice to have.");
-    } else {
+    } else if (seatsTotal > teamSize) {
+      /*
+       * Surplus seats are the least disruptive lever, and the saving is the
+       * per-seat arithmetic rather than a guessed percentage — a decision that
+       * quotes a number the maths does not support is worse than no decision.
+       */
       recommendation = "rightsize_seats";
-      seatsTarget = Math.max(1, seatsTotal - 1);
-      recommendedAnnual = percentOf(doNothingAnnual, 60, currency);
+      seatsTarget = teamSize;
+      recommendedAnnual = perSeatAnnual(doNothingAnnual, seatsTotal, teamSize, currency);
       confidence = 0.55;
       reasons.push(
-        "Over budget with no cheaper equivalent; trimming the plan is the least disruptive lever.",
+        `Over budget with no cheaper equivalent; the invoice bills ${seatsTotal} seats against a team of ${teamSize}.`,
+      );
+    } else {
+      /* Over budget, nothing cheaper and no seats to trim. Experimental spend is
+       * the category the user already said they were least committed to. */
+      recommendation = "cancel";
+      recommendedAnnual = "0.00";
+      confidence = 0.58;
+      reasons.push(
+        `Over budget at ${doNothingAnnual} ${currency} a year with no cheaper equivalent and no surplus seats, on a tool you marked experimental.`,
       );
     }
   } else if (hasTermDiscount && catalogTool) {
@@ -561,9 +612,14 @@ export function decide(input: EngineInput): EngineOutcome {
       unusedDays,
       idleSeats,
       seatsTotal,
+      seatsTarget,
+      teamSize,
       annualBillingSaving,
       daysToRenewal,
       doNothingAnnual,
+      experimentalAndExpensive: isMarkedExperimentalAndExpensive(sub_, policy),
+      overBudget: budgetExceeded || categoryBudgetExceeded,
+      spendCeiling: policy.spendCeiling,
     }),
     reasons,
     inputsUsed,
@@ -610,27 +666,47 @@ function buildDiagnosis(
     unusedDays: number | null;
     idleSeats: number;
     seatsTotal: number;
+    seatsTarget: number | null;
+    teamSize: number;
     annualBillingSaving: string;
     daysToRenewal: number | null;
     doNothingAnnual: string;
+    experimentalAndExpensive: boolean;
+    overBudget: boolean;
+    spendCeiling: string | null;
   },
 ): string {
   const currency = sub_.currency;
+  const annual = `${facts.doNothingAnnual} ${currency} a year`;
+
   switch (recommendation) {
     case "cancel":
-      return `No recorded use for about ${facts.unusedDays} days at ${facts.doNothingAnnual} ${currency} a year.`;
+      if (facts.unusedDays !== null) {
+        return `Your note says no use for about ${facts.unusedDays} days, at ${annual}.`;
+      }
+      if (facts.experimentalAndExpensive && facts.spendCeiling) {
+        return `You marked this experimental and it is above your ${normalizeAmount(facts.spendCeiling, currency)} ${currency} ceiling, at ${annual}.`;
+      }
+      if (facts.overBudget) {
+        return `Over your budget at ${annual}, with nothing cheaper covering the same job.`;
+      }
+      return `You marked this experimental, at ${annual}.`;
     case "rightsize_seats":
+      // Idle-seat wording requires activity data. Without it, say what the
+      // invoice says and what the workspace is set to, and nothing more.
       return facts.idleSeats > 0
         ? `${facts.idleSeats} of ${facts.seatsTotal} seats are sitting idle.`
-        : `The plan is larger than the team is using.`;
+        : `The invoice bills ${facts.seatsTotal} seats; this workspace is set to ${facts.teamSize}.`;
     case "switch_term":
       return `Billed monthly; the annual term is ${facts.annualBillingSaving} ${currency} a year cheaper for the same tier.`;
     case "switch_vendor":
       return `A cheaper tool covers the same job at this seat count.`;
     case "snooze":
-      return `In use and priced correctly, and the renewal is ${facts.daysToRenewal} days out.`;
+      return `Nothing in the invoice or your policy flags this, and the renewal is ${facts.daysToRenewal} days out.`;
     case "renew":
-      return `In use, within budget, and nothing cheaper covers the same job.`;
+      return facts.overBudget
+        ? `Over your budget at ${annual}, but nothing cheaper covers the same job.`
+        : `Within your policy at ${annual}, and nothing cheaper covers the same job.`;
   }
 }
 

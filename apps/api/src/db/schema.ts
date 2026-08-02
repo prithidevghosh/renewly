@@ -219,6 +219,12 @@ export const workspaceSettings = pgTable("workspace_settings", {
     .$type<Record<string, string>>()
     .notNull()
     .default({}),
+  /**
+   * People who actually need a seat. Defaults to 1 because the product is built
+   * for a solo founder, and because it lets the engine reason about a multi-seat
+   * invoice without asking anyone how many seats they use.
+   */
+  teamSize: integer("team_size").notNull().default(1),
   /** { start: "22:00", end: "08:00", tz: "UTC" }. Outbound is deferred, never dropped. */
   quietHoursJson: jsonb("quiet_hours_json").$type<QuietHours | null>(),
   primaryChannel: channelEnum("primary_channel").notNull().default("simulator"),

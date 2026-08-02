@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { Recommendation } from "../decisions/engine.js";
+import {
+  decide,
+  type EngineSubscription,
+  type Recommendation,
+} from "../decisions/engine.js";
 import {
   composeActionProof,
   composeAttestationAsk,
@@ -231,6 +235,122 @@ describe("acknowledgements", () => {
     for (const command of ["APPROVE", "KEEP", "LATER", "WHY", "DONE", "STOP"]) {
       expect(text).toContain(command);
     }
+  });
+});
+
+describe("honesty about what is known", () => {
+  /**
+   * These drive the real engine into the real composer, because the honesty
+   * guarantee only matters for the string that actually reaches the phone.
+   * V1 reads no vendor telemetry, so a message may only claim a tool is unused
+   * when the user's own note said so.
+   */
+  const USAGE_CLAIM = /barely|rarely|hardly|no recorded use|you (do not|don't) use|abandoned/i;
+
+  function engineSubscription(overrides: Partial<EngineSubscription> = {}): EngineSubscription {
+    return {
+      id: "sub_1",
+      merchantName: "Midjourney Standard",
+      planName: "Standard",
+      amount: "30.00",
+      currency: "USD",
+      billingCycle: "monthly",
+      criticality: "experimental",
+      jobCategory: "design",
+      usageNote: null,
+      seatsTotal: 1,
+      seatsActive: null,
+      nextRenewalAt: new Date("2026-08-12T12:00:00Z"),
+      status: "active",
+      ...overrides,
+    };
+  }
+
+  function proposalFor(sub: EngineSubscription, spendCeiling: string | null = "10.00"): string {
+    const outcome = decide({
+      subscription: sub,
+      policy: {
+        killSwitch: false,
+        approvalMode: "ask_above_ceiling",
+        spendCeiling,
+        aiMonthlyBudget: null,
+        categoryCeilings: {},
+        currency: "USD",
+        policyVersion: 1,
+        teamSize: 1,
+      },
+      peers: [],
+      now: new Date("2026-08-01T00:00:00Z"),
+    });
+
+    return composeProposal({
+      merchant: sub.merchantName,
+      amount: sub.amount,
+      currency: sub.currency,
+      cycle: sub.billingCycle,
+      renewalDate: sub.nextRenewalAt,
+      diagnosis: outcome.diagnosis,
+      recommendation: outcome.recommendation,
+      savingsAnnual: outcome.savingsAnnual,
+    });
+  }
+
+  it("does not claim the user barely uses a tool when there is no usage note", () => {
+    const text = proposalFor(engineSubscription({ usageNote: null }));
+
+    expect(text).not.toMatch(USAGE_CLAIM);
+    // "null" leaking into a message is the specific bug this guards.
+    expect(text).not.toContain("null");
+  });
+
+  it("gives the policy reason instead, so the user can argue with it", () => {
+    const text = proposalFor(
+      engineSubscription({ merchantName: "Some Bespoke Vendor", amount: "99.00" }),
+    );
+
+    expect(text).toContain("experimental");
+    expect(text).toContain("ceiling");
+    expect(text).not.toMatch(USAGE_CLAIM);
+  });
+
+  it("may only describe a tool as unused when the user's own note said so", () => {
+    const text = proposalFor(
+      engineSubscription({ usageNote: "Unused for 60 days since the brand work finished." }),
+    );
+
+    expect(text).toContain("Cancel");
+    expect(text).toContain("60 days");
+    // Attributed to the note rather than asserted as observed fact.
+    expect(text).toContain("Your note says");
+  });
+
+  it("proposes rightsizing a multi-seat invoice without naming or accusing anyone", () => {
+    const text = proposalFor(
+      engineSubscription({
+        merchantName: "Figma Professional",
+        amount: "144.00",
+        criticality: "nice_to_have",
+        seatsTotal: 4,
+        seatsActive: null,
+        usageNote: null,
+      }),
+      "500.00",
+    );
+
+    expect(text).toContain("Recommended: Rightsize seats");
+    // States the invoice fact and the workspace setting, and nothing about people.
+    expect(text).toContain("bills 4 seats");
+    expect(text).toContain("set to 1");
+    expect(text).not.toMatch(/dead|idle|inactive|seat holder|member|user \w+|@/i);
+    expect(text).not.toMatch(USAGE_CLAIM);
+  });
+
+  it("still asks for one approval rather than asking how much the tool is used", () => {
+    const text = proposalFor(engineSubscription({ usageNote: null }));
+
+    expect(text).toContain("Reply APPROVE");
+    // No interview: the agent decides first and asks once.
+    expect(text).not.toMatch(/how (often|much|many)|reply 1|rate this|do you (still )?use/i);
   });
 });
 

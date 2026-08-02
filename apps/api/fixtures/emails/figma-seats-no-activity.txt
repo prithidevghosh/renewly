@@ -1,0 +1,22 @@
+From: Figma Billing <billing@figma.com>
+To: renew+demo@inbound.renewly.app
+Subject: Your Figma Professional plan renews on 03 September 2026
+Date: Mon, 27 Jul 2026 08:31:04 +0000
+Message-ID: <fig-2026-07-27-90114@figma.com>
+
+Hello,
+
+Your Figma Professional plan renews on 03 September 2026.
+
+Plan:              Professional
+Full seats:        4
+Billing:           Monthly
+Amount per month:  $144.00 USD
+
+Total: $144.00
+
+Your card will be charged on the renewal date.
+
+Manage seats: https://www.figma.com/settings
+
+Figma, Inc.

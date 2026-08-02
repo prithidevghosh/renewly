@@ -47,6 +47,49 @@ describe("decision packages", () => {
     expect(pkg.narrative_source).toBe("deterministic");
   });
 
+  it("decides from a bare invoice, with no usage note and no seat activity", async () => {
+    // Exactly what a renewal email gives you: a merchant, an amount, a cycle
+    // and a date. No question is asked of the user before this decision exists.
+    const subscription = await createSubscription(client, {
+      merchantName: "Anthropic",
+      planName: "Claude Pro",
+      amount: "20.00",
+      billingCycle: "monthly",
+      criticality: "must_keep",
+      jobCategory: "ai",
+      usageNote: null,
+    });
+    const decision = await createDecision(client, subscription.id);
+
+    expect(decision.recommendation).toBe("switch_term");
+    expect(decision.package.counterfactuals.recommended.savings_vs_do_nothing).toBe("36.00");
+
+    const pkg = decision.package;
+    expect(pkg.inputs_used.some((i) => i.startsWith("subscription.usage_note"))).toBe(false);
+    expect(pkg.inputs_used.some((i) => i.startsWith("subscription.seats_active"))).toBe(false);
+    expect(pkg.diagnosis).not.toMatch(/barely|rarely|no recorded use|unused/i);
+  });
+
+  it("proposes rightsizing a multi-seat invoice against the workspace team size", async () => {
+    const subscription = await createSubscription(client, {
+      merchantName: "Figma Professional",
+      amount: "144.00",
+      billingCycle: "monthly",
+      criticality: "nice_to_have",
+      jobCategory: "design",
+      seatsTotal: 4,
+      usageNote: null,
+    });
+    const decision = await createDecision(client, subscription.id);
+
+    expect(decision.recommendation).toBe("rightsize_seats");
+    // The default solo workspace, not a claim about who logs in.
+    expect(decision.package.seats_target).toBe(1);
+    expect(decision.package.diagnosis).toContain("bills 4 seats");
+    expect(decision.package.diagnosis).not.toMatch(/idle|dead|inactive/i);
+    expect(decision.package.inputs_used).toContain("policy.team_size=1");
+  });
+
   it("offers only catalog alternatives, at catalog prices", async () => {
     const subscription = await createSubscription(client, {
       merchantName: "Midjourney Standard",

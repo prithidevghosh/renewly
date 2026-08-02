@@ -12,6 +12,7 @@ function settings(overrides: Partial<WorkspaceSettings> = {}): WorkspaceSettings
     spendCeiling: "50.00",
     killSwitch: false,
     categoryCeilings: {},
+    teamSize: 1,
     quietHoursJson: null,
     primaryChannel: "simulator",
     policyVersion: 1,

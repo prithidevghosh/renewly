@@ -80,6 +80,7 @@ export function toEnginePolicy(settings: AuthContext["settings"]): EnginePolicy 
     categoryCeilings: settings.categoryCeilings ?? {},
     currency: settings.currency,
     policyVersion: settings.policyVersion,
+    teamSize: settings.teamSize,
   };
 }
 

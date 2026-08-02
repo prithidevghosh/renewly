@@ -1,0 +1,1 @@
+ALTER TABLE "workspace_settings" ADD COLUMN "team_size" integer DEFAULT 1 NOT NULL;

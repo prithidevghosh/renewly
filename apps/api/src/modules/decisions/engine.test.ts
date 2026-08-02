@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  annualTermSaving,
   decide,
   deterministicNarrative,
   inferActiveSeats,
   inferUnusedDays,
+  isAnnualCheaperThanMonthly,
   isAttestedAction,
+  isExpensivePlanVsCatalog,
+  isMarkedExperimentalAndExpensive,
+  isOverCategoryCeiling,
   isPayingAction,
   monthlyRunRate,
   type EngineInput,
@@ -109,6 +114,251 @@ describe("monthlyRunRate", () => {
         "USD",
       ),
     ).toBe("30.00");
+  });
+});
+
+describe("overspend predicates", () => {
+  it("isOverCategoryCeiling compares the category run rate, not one line item", () => {
+    const sub = subscription({ amount: "30.00", jobCategory: "design" });
+
+    expect(isOverCategoryCeiling(sub, policy({ categoryCeilings: { design: "25.00" } }))).toBe(true);
+    expect(isOverCategoryCeiling(sub, policy({ categoryCeilings: { design: "40.00" } }))).toBe(
+      false,
+    );
+
+    // A peer in the same category can push it over on its own.
+    expect(
+      isOverCategoryCeiling(sub, policy({ categoryCeilings: { design: "40.00" } }), [
+        {
+          id: "sub_2",
+          amount: "20.00",
+          billingCycle: "monthly",
+          jobCategory: "design",
+          merchantName: "Penpot",
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("isOverCategoryCeiling is false when the category has no ceiling", () => {
+    expect(isOverCategoryCeiling(subscription({ amount: "999.00" }), policy())).toBe(false);
+    expect(isOverCategoryCeiling(subscription({ jobCategory: null }), policy())).toBe(false);
+  });
+
+  it("isExpensivePlanVsCatalog reports the annual difference", () => {
+    const dear = isExpensivePlanVsCatalog(
+      subscription({ merchantName: "Midjourney Standard", amount: "30.00" }),
+    );
+    expect(dear.cheaper).toBe(true);
+    // 30.00/mo is 360.00 a year; Midjourney Basic is 120.00.
+    expect(dear.diff).toBe("240.00");
+
+    const alreadyCheapest = isExpensivePlanVsCatalog(
+      subscription({ merchantName: "Penpot", amount: "0.00" }),
+    );
+    expect(alreadyCheapest).toEqual({ cheaper: false, diff: "0.00" });
+  });
+
+  it("isAnnualCheaperThanMonthly is plan maths and needs no usage", () => {
+    expect(isAnnualCheaperThanMonthly(subscription({ usageNote: null }))).toBe(true);
+    expect(annualTermSaving(subscription({ usageNote: null }))).toBe("36.00");
+
+    // Already annual: there is no term left to switch to.
+    expect(
+      isAnnualCheaperThanMonthly(subscription({ amount: "240.00", billingCycle: "yearly" })),
+    ).toBe(false);
+    // No annual price in the catalog for this tool.
+    expect(isAnnualCheaperThanMonthly(subscription({ merchantName: "ChatGPT Plus" }))).toBe(false);
+  });
+
+  it("isMarkedExperimentalAndExpensive needs both the tag and the ceiling breach", () => {
+    const dear = { amount: "99.00", currency: "USD" };
+    expect(isMarkedExperimentalAndExpensive({ ...dear, criticality: "experimental" }, policy())).toBe(
+      true,
+    );
+    expect(isMarkedExperimentalAndExpensive({ ...dear, criticality: "nice_to_have" }, policy())).toBe(
+      false,
+    );
+    expect(
+      isMarkedExperimentalAndExpensive(
+        { amount: "10.00", currency: "USD", criticality: "experimental" },
+        policy(),
+      ),
+    ).toBe(false);
+    expect(
+      isMarkedExperimentalAndExpensive(
+        { ...dear, criticality: "experimental" },
+        policy({ spendCeiling: null }),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("decide — without usage or seat data", () => {
+  /**
+   * The product rule this file exists to defend: a renewal email carries an
+   * amount, a cycle and a date. It does not carry logins. Every one of these
+   * cases has usageNote null and seatsActive null, and every one must still
+   * produce an actionable decision without anyone being asked a question.
+   */
+
+  it("still produces a decision when usage and seat data are both absent", () => {
+    const outcome = decide(
+      input({ subscription: subscription({ usageNote: null, seatsActive: null }) }),
+    );
+
+    expect(outcome.recommendation).toBeDefined();
+    expect(outcome.diagnosis.length).toBeGreaterThan(10);
+    expect(outcome.inputsUsed.some((i) => i.startsWith("subscription.usage_note"))).toBe(false);
+  });
+
+  it("cancels an experimental tool above the ceiling and says why, without inventing usage", () => {
+    const outcome = decide(
+      input({
+        subscription: subscription({
+          merchantName: "Some Bespoke Vendor",
+          amount: "99.00",
+          criticality: "experimental",
+          usageNote: null,
+          seatsActive: null,
+        }),
+      }),
+    );
+
+    expect(outcome.recommendation).toBe("cancel");
+    expect(outcome.diagnosis).toContain("experimental");
+    expect(outcome.diagnosis).toContain("ceiling");
+    // The old text read "No recorded use for about null days".
+    expect(outcome.diagnosis).not.toContain("null");
+    expect(outcome.diagnosis).not.toMatch(/no recorded use|barely|rarely|unused/i);
+  });
+
+  it("cancels over a category ceiling with no cheaper equivalent, on policy alone", () => {
+    const outcome = decide(
+      input({
+        subscription: subscription({
+          merchantName: "Some Bespoke Vendor",
+          amount: "40.00",
+          criticality: "nice_to_have",
+          jobCategory: "design",
+          usageNote: null,
+        }),
+        policy: policy({ categoryCeilings: { design: "25.00" } }),
+      }),
+    );
+
+    expect(outcome.recommendation).toBe("cancel");
+    expect(outcome.policyFlags).toContain("CATEGORY_CEILING_EXCEEDED");
+    expect(outcome.diagnosis).not.toMatch(/no recorded use|barely|rarely|unused/i);
+  });
+
+  it("switches term on plan maths alone", () => {
+    const outcome = decide(
+      input({ subscription: subscription({ criticality: "must_keep", usageNote: null }) }),
+    );
+
+    expect(outcome.recommendation).toBe("switch_term");
+    expect(outcome.savingsAnnual).toBe("36.00");
+    expect(outcome.diagnosis).not.toMatch(/barely|rarely|unused|in use/i);
+  });
+
+  it("rightsizes a multi-seat invoice to the solo default when no activity is known", () => {
+    const outcome = decide(
+      input({
+        subscription: subscription({
+          merchantName: "Figma Professional",
+          amount: "144.00",
+          billingCycle: "monthly",
+          seatsTotal: 4,
+          seatsActive: null,
+          usageNote: null,
+          jobCategory: "design",
+        }),
+      }),
+    );
+
+    expect(outcome.recommendation).toBe("rightsize_seats");
+    expect(outcome.seatsTarget).toBe(1);
+    // 144.00/mo over 4 seats is 36.00 per seat, so one seat is 432.00 a year.
+    expect(outcome.doNothingAnnual).toBe("1728.00");
+    expect(outcome.recommendedAnnual).toBe("432.00");
+    // It must justify itself from the invoice and the policy, never from logins.
+    expect(outcome.diagnosis).toContain("bills 4 seats");
+    expect(outcome.diagnosis).not.toMatch(/idle|dead|unused|barely/i);
+    expect(outcome.inputsUsed).toContain("policy.team_size=1");
+  });
+
+  it("respects a larger team rather than assuming everyone is a solo founder", () => {
+    const outcome = decide(
+      input({
+        subscription: subscription({
+          merchantName: "Figma Professional",
+          amount: "144.00",
+          seatsTotal: 4,
+          seatsActive: null,
+          usageNote: null,
+        }),
+        policy: policy({ teamSize: 4 }),
+      }),
+    );
+
+    expect(outcome.recommendation).not.toBe("rightsize_seats");
+  });
+
+  it("leaves a must_keep multi-seat plan alone rather than trimming it blind", () => {
+    const outcome = decide(
+      input({
+        subscription: subscription({
+          merchantName: "Figma Professional",
+          amount: "144.00",
+          seatsTotal: 4,
+          seatsActive: null,
+          usageNote: null,
+          criticality: "must_keep",
+        }),
+      }),
+    );
+
+    expect(outcome.recommendation).not.toBe("rightsize_seats");
+  });
+
+  it("changes its mind when the ceiling changes, with the same empty usage data", () => {
+    const sub = subscription({
+      merchantName: "Some Bespoke Vendor",
+      amount: "99.00",
+      criticality: "experimental",
+      usageNote: null,
+      seatsActive: null,
+    });
+
+    const tight = decide(input({ subscription: sub, policy: policy({ spendCeiling: "50.00" }) }));
+    const loose = decide(input({ subscription: sub, policy: policy({ spendCeiling: "500.00" }) }));
+
+    expect(tight.recommendation).toBe("cancel");
+    expect(loose.recommendation).not.toBe("cancel");
+  });
+
+  it("never claims a saving it cannot derive from the invoice", () => {
+    // Over budget, nothing cheaper, one seat: there is no seat to trim, so the
+    // engine must not quote a trimming saving it cannot substantiate.
+    const outcome = decide(
+      input({
+        subscription: subscription({
+          merchantName: "Some Bespoke Vendor",
+          amount: "40.00",
+          criticality: "must_keep",
+          seatsTotal: 1,
+          usageNote: null,
+        }),
+        policy: policy({ aiMonthlyBudget: "10.00" }),
+      }),
+    );
+
+    expect(outcome.policyFlags).toContain("BUDGET_EXCEEDED");
+    expect(outcome.recommendation).toBe("renew");
+    expect(outcome.savingsAnnual).toBe("0.00");
+    // It is over budget; the line must not tell the user it is within budget.
+    expect(outcome.diagnosis).not.toMatch(/within (your )?budget/i);
   });
 });
 
