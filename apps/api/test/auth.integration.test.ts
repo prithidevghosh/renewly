@@ -130,7 +130,7 @@ describe("auth", () => {
     expect(response.body.settings.approvalMode).toBe("always_ask");
     expect(response.body.settings.killSwitch).toBe(false);
     expect(response.body.settings.spendCeiling).toBe("50.00");
-    expect(response.body.settings.primaryChannel).toBe("simulator");
+    expect(response.body.settings.primaryChannel).toBe("imessage");
   });
 
   it("rejects a missing, malformed or forged token", async () => {

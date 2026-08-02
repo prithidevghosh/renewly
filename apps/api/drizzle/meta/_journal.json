@@ -36,6 +36,13 @@
       "when": 1785626600397,
       "tag": "0004_agent_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785713148605,
+      "tag": "0005_primary_channel_default",
+      "breakpoints": true
     }
   ]
 }
