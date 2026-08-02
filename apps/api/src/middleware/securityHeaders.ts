@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono";
+import { isProduction } from "../env.js";
 import type { AppEnv } from "../types/context.js";
 
 /**
@@ -14,5 +15,11 @@ export const securityHeaders = (): MiddlewareHandler<AppEnv> => async (c, next) 
   c.header("cross-origin-resource-policy", "same-origin");
   c.header("content-security-policy", "default-src 'none'; frame-ancestors 'none'");
   c.header("permissions-policy", "geolocation=(), microphone=(), camera=()");
-  c.header("strict-transport-security", "max-age=31536000; includeSubDomains");
+  // HSTS is remembered per host and ignores the port, so sending it from the
+  // API on localhost:4000 makes the browser force https on the web app at
+  // localhost:3000 too — and dev has no certificate. Only promise it in
+  // production, where we actually terminate TLS.
+  if (isProduction()) {
+    c.header("strict-transport-security", "max-age=31536000; includeSubDomains");
+  }
 };
