@@ -51,6 +51,8 @@ export const AUDIT_TYPES = [
   "approval.cancelled_by_user",
   "mail.received",
   "mail.duplicate",
+  "mailbox.connected",
+  "mailbox.revoked",
   "merchant.resolved",
   "job.failed",
 ] as const;

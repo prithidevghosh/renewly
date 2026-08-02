@@ -6,6 +6,7 @@ import { rateLimit } from "./middleware/rateLimit.js";
 import { requestId } from "./middleware/requestId.js";
 import { securityHeaders } from "./middleware/securityHeaders.js";
 import { agentRoutes } from "./modules/agent/routes.js";
+import { mailboxRoutes } from "./modules/mailbox/routes.js";
 import { approvalRoutes } from "./modules/approvals/routes.js";
 import { authRoutes, meRoutes } from "./modules/auth/routes.js";
 import { channelRoutes, channelWebhookRoutes } from "./modules/channels/routes.js";
@@ -93,6 +94,7 @@ export function createApp(): Hono<AppEnv> {
   app.route("/v1/intake/mail-address", mailAddressRoutes);
   app.route("/v1/decisions", decisionRoutes);
   app.route("/v1/agent", agentRoutes);
+  app.route("/v1/mailbox", mailboxRoutes);
   app.route("/v1/approvals", approvalRoutes);
   app.route("/v1/payment-sessions", paymentSessionRoutes);
   app.route("/v1/receipts", receiptRoutes);

@@ -44,6 +44,13 @@ const envSchema = z.object({
   /** `common` accepts both work and personal Microsoft accounts. */
   MICROSOFT_TENANT: z.string().default("common"),
 
+  /**
+   * Mailbox read access. Separate from OAUTH_MODE so login can be live while
+   * the inbox stays mocked — Gmail's read scope is restricted and needs
+   * Google's review, which arrives long after sign-in works.
+   */
+  MAILBOX_MODE: z.enum(["mock", "live"]).default("mock"),
+
   /** Six-digit code lifetime, and how many guesses it survives. */
   VERIFICATION_CODE_TTL_MINUTES: z.coerce.number().int().positive().default(15),
   VERIFICATION_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
