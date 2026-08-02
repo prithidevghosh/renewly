@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { getDb } from "../../db/client.js";
-import { conversationMessages, type ChannelName } from "../../db/schema.js";
+import { conversationMessages, workspaceSettings, type ChannelName } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { readJson } from "../../lib/http.js";
 import { logger } from "../../lib/logger.js";
@@ -81,13 +81,25 @@ channelRoutes.post("/connect", async (c) => {
     ...(input.metadata ? { metadata: input.metadata as Record<string, unknown> } : {}),
   });
 
+  /*
+   * The channel just connected becomes the one proposals go to. Without this a
+   * workspace connects iMessage while `primaryChannel` keeps its default, and
+   * every notify job fails on a channel that was never connected — the settings
+   * row and the connections table disagree about where the user can be reached.
+   * Delivery plumbing, not spend policy, so the policy version does not bump.
+   */
+  await getDb()
+    .update(workspaceSettings)
+    .set({ primaryChannel: row.channel, updatedAt: new Date() })
+    .where(eq(workspaceSettings.workspaceId, workspace.id));
+
   await recordAudit({
     workspaceId: workspace.id,
     actorUserId: user.id,
     type: "channel.connected",
     entityType: "channel_connection",
     entityId: row.id,
-    data: { channel: row.channel },
+    data: { channel: row.channel, primaryChannel: row.channel },
   });
 
   c.get("log").info(

@@ -8,6 +8,7 @@ import {
   createDecisionAndNotify,
   createSubscription,
   lastOutbound,
+  signUp,
   signUpWithChannel,
 } from "../src/test/factories.js";
 import { ApiClient, createHarness, type TestHarness } from "../src/test/helpers.js";
@@ -161,6 +162,61 @@ describe("sweepForProposals", () => {
 
     expect(await notifyJobsFor(broken.user.workspaceId)).toHaveLength(0);
     expect(await notifyJobsFor(healthy.user.workspaceId)).toHaveLength(1);
+  });
+
+  it("10. queues nothing for a workspace with no connected channel", async () => {
+    // The production failure mode: a fresh workspace keeps the default
+    // primaryChannel with no connection behind it, and every notify job the
+    // sweep queued failed on CHANNEL_NOT_CONNECTED until it parked.
+    const client = new ApiClient(harness.app);
+    const user = await signUp(client);
+    await createSubscription(client, { nextRenewalAt: inDays(3) });
+
+    await expect(sweepForProposals(harness.handle.db)).resolves.toBeTruthy();
+
+    expect(await notifyJobsFor(user.workspaceId)).toHaveLength(0);
+  });
+
+  it("11. a queued job whose channel disappeared completes without retrying", async () => {
+    const { client, user, subscription } = await workspaceWithSubscription({
+      nextRenewalAt: inDays(3),
+    });
+    await sweepForProposals(harness.handle.db);
+    expect(await notifyJobsFor(user.workspaceId)).toHaveLength(1);
+
+    // Revoke the connection between sweep and job run — the race the
+    // processor-level guard exists for.
+    const channels = await client.get<{ channels: Array<{ id: string }> }>("/v1/channels");
+    await client.delete(`/v1/channels/${channels.body.channels[0]!.id}`);
+
+    await processJobs(harness.handle.db, 50);
+
+    const [job] = await notifyJobsFor(user.workspaceId);
+    expect(job!.status).toBe("done");
+    expect(job!.attempts).toBe(1);
+
+    // No orphaned drafted approval either.
+    const approvals = await client.get<{ approvals: Array<{ subscriptionId: string }> }>(
+      "/v1/approvals",
+    );
+    expect(approvals.body.approvals.filter((a) => a.subscriptionId === subscription.id)).toHaveLength(0);
+  });
+
+  it("12. connecting a channel makes it the primary channel", async () => {
+    const client = new ApiClient(harness.app);
+    await signUp(client);
+
+    const before = await client.get<{ settings: { primaryChannel: string } }>("/v1/settings");
+    expect(before.body.settings.primaryChannel).toBe("simulator");
+
+    const connected = await client.post("/v1/channels/connect", {
+      channel: "imessage",
+      externalId: "+15550109999",
+    });
+    expect(connected.status).toBe(201);
+
+    const after = await client.get<{ settings: { primaryChannel: string } }>("/v1/settings");
+    expect(after.body.settings.primaryChannel).toBe("imessage");
   });
 
   it("POST /v1/agent/sweep runs one pass and reports it", async () => {

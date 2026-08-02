@@ -10,6 +10,7 @@ import { env } from "../../env.js";
 import { logger } from "../../lib/logger.js";
 import { findLiveApprovalForDecision } from "../approvals/service.js";
 import { resolveAuthContext } from "../auth/service.js";
+import { hasActiveConnection } from "../conversations/service.js";
 import { generateDecisionPackage } from "../decisions/service.js";
 import { enqueueJob } from "./queues.js";
 
@@ -49,6 +50,21 @@ export async function sweepForProposals(
     // One broken subscription must not stop the sweep for everyone else.
     try {
       const auth = await resolveAuthContext(workspace.ownerUserId, workspace.id, db);
+
+      /*
+       * A proposal that cannot be delivered must not be queued. A workspace
+       * whose primary channel has no active connection — most commonly the
+       * "simulator" default in production, where the simulator does not exist —
+       * would otherwise produce a job that fails every attempt and parks, on
+       * every sweep, forever.
+       */
+      if (!(await hasActiveConnection(workspace.id, auth.settings.primaryChannel, db))) {
+        logger.debug(
+          { workspaceId: workspace.id, channel: auth.settings.primaryChannel },
+          "sweep skipped a workspace with no connected channel",
+        );
+        continue;
+      }
 
       const decision = await generateDecisionPackage({
         auth,

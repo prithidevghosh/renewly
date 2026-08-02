@@ -22,6 +22,27 @@ import type { QuietHours } from "../../db/schema.js";
  * dropping it.
  */
 
+/** Whether the workspace can be reached on this channel. Never throws — for
+ *  callers deciding whether to attempt delivery, not performing it. */
+export async function hasActiveConnection(
+  workspaceId: string,
+  channel: ChannelName,
+  db: Database = getDb(),
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: channelConnections.id })
+    .from(channelConnections)
+    .where(
+      and(
+        eq(channelConnections.workspaceId, workspaceId),
+        eq(channelConnections.channel, channel),
+        eq(channelConnections.status, "active"),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
+}
+
 export async function getActiveConnection(
   workspaceId: string,
   channel: ChannelName,
