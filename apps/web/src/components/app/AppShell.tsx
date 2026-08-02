@@ -36,6 +36,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ? "settled"
         : "idle";
 
+  // The agentic cockpit owns both axes of the viewport: the live terminal is
+  // the upper field and its three evidence/configuration ledgers form the
+  // lower field. A second navigation rail would break that composition.
+  if (pathname === "/agent" || pathname === "/dashboard") return <>{children}</>;
+
   return (
     <div className="flex min-h-dvh flex-col lg:flex-row">
       {/* ── Desktop rail ────────────────────────────────────────────────── */}
@@ -59,9 +64,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     className={cx(
                       "group relative flex h-9 items-center gap-2.5 rounded-md px-2.5",
                       "text-body-s transition-colors duration-[var(--dur-instant)]",
-                      active
-                        ? "bg-sunk text-ink"
-                        : "text-ink-3 hover:bg-hover hover:text-ink-2",
+                      active ? "bg-sunk text-ink" : "text-ink-3 hover:bg-hover hover:text-ink-2",
                     )}
                   >
                     {active && (

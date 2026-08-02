@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import { env } from "../../env.js";
 import { AppError } from "../../lib/errors.js";
 import { sha256 } from "../../lib/crypto.js";
-import { logger } from "../../lib/logger.js";
 import type { MailboxProvider } from "../../db/schema.js";
 import {
   MAILBOX_SCOPES,
@@ -37,16 +36,14 @@ let cache: Fixture[] | null = null;
 function fixtures(): Fixture[] {
   if (cache) return cache;
 
-  // The fixtures are repository files, so a deployed image that trimmed them
-  // has no mock mail to serve. That is an empty inbox, not a crash: mock mode
-  // is the default, and a missing directory must not take down a request.
+  // Missing fixtures means the deployment is wrong, so say that rather than
+  // returning an empty inbox. "You have no receipts" and "this build is broken"
+  // look identical to a user and must not be reported the same way.
   if (!existsSync(FIXTURES)) {
-    logger.warn(
-      { path: FIXTURES },
-      "mock mailbox has no fixtures directory — serving an empty inbox",
+    throw new AppError(
+      "INTERNAL_ERROR",
+      `Mock mailbox fixtures are missing at ${FIXTURES}. This build cannot serve mock mail.`,
     );
-    cache = [];
-    return cache;
   }
 
   cache = readdirSync(FIXTURES)
@@ -64,7 +61,18 @@ function headerOf(raw: string, field: string): string | null {
 export class MockMailboxClient implements MailboxClient {
   readonly mode = "mock" as const;
 
-  constructor(readonly provider: MailboxProvider) {}
+  constructor(readonly provider: MailboxProvider) {
+    // A mock mailbox hands one person fixture data dressed as their own mail.
+    // env.ts refuses to boot on MAILBOX_MODE=mock in production; this makes the
+    // class itself unusable there too.
+    if (env.NODE_ENV === "production") {
+      throw new AppError(
+        "INTERNAL_ERROR",
+        "The mock mailbox is not available in production. It serves fixture " +
+          "data as if it were the user's own mail.",
+      );
+    }
+  }
 
   authorizeUrl(input: { state: string; redirectUri: string }): string {
     const url = new URL(input.redirectUri);
@@ -147,6 +155,11 @@ export function resetMailboxClients(): void {
 export async function getMailboxClient(provider: MailboxProvider): Promise<MailboxClient> {
   const override = overrides.get(provider);
   if (override) return override;
+  if (env.MAILBOX_MODE === "disabled") {
+    throw new AppError("VALIDATION_ERROR", "Mailbox access is turned off on this deployment", {
+      provider,
+    });
+  }
   if (env.MAILBOX_MODE === "mock") return new MockMailboxClient(provider);
 
   if (provider === "gmail") {

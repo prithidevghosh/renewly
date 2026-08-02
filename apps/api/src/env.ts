@@ -36,7 +36,22 @@ const envSchema = z.object({
    * whole flow — including account linking — runs in tests and demos with no
    * Google or Microsoft credentials.
    */
-  OAUTH_MODE: z.enum(["mock", "live"]).default("mock"),
+  /**
+   * Deliberate escape hatch for a demo deployment. Permits mock payments and
+   * messaging in production; never permits mock auth or a mock mailbox.
+   */
+  ALLOW_MOCK_INTEGRATIONS: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+
+  /**
+   * `disabled` is a first-class answer: the social buttons disappear and the
+   * routes say so. A feature that is switched off is honest; a feature that
+   * pretends to work is not, which is why production may choose real or off
+   * but never mock.
+   */
+  OAUTH_MODE: z.enum(["mock", "live", "disabled"]).default("mock"),
   GOOGLE_CLIENT_ID: optional(z.string()),
   GOOGLE_CLIENT_SECRET: optional(z.string()),
   MICROSOFT_CLIENT_ID: optional(z.string()),
@@ -49,7 +64,7 @@ const envSchema = z.object({
    * the inbox stays mocked — Gmail's read scope is restricted and needs
    * Google's review, which arrives long after sign-in works.
    */
-  MAILBOX_MODE: z.enum(["mock", "live"]).default("mock"),
+  MAILBOX_MODE: z.enum(["mock", "live", "disabled"]).default("mock"),
 
   /** Six-digit code lifetime, and how many guesses it survives. */
   VERIFICATION_CODE_TTL_MINUTES: z.coerce.number().int().positive().default(15),
@@ -158,6 +173,53 @@ function parseEnv(): Env {
     }
     if (value.PRAVA_MODE !== "mock" && !value.PRAVA_SECRET_KEY) {
       throw new Error("PRAVA_SECRET_KEY is required when PRAVA_MODE is sandbox or live");
+    }
+
+    /*
+     * No fake anything in production.
+     *
+     * Every adapter defaults to `mock` so the suite and a laptop need no keys.
+     * That default is right for a test and catastrophic in production, where it
+     * silently turns real requests into theatre. It is not hypothetical: with
+     * OAUTH_MODE unset, POST to the Google callback with
+     * `code=mock:x:ceo@yourdomain.com` returned a valid session for that
+     * address — no password, no Google, no consent.
+     *
+     * So mock in production is a boot failure, not a warning. A service that
+     * refuses to start is a bad afternoon; a service that quietly authenticates
+     * anyone, or shows one customer another's data, is unrecoverable.
+     */
+    const identityMocks: string[] = [];
+    if (value.OAUTH_MODE === "mock") identityMocks.push("OAUTH_MODE");
+    if (value.MAILBOX_MODE === "mock") identityMocks.push("MAILBOX_MODE");
+    if (identityMocks.length > 0) {
+      throw new Error(
+        `${identityMocks.join(" and ")} cannot be "mock" in production. ` +
+          "Mock auth accepts any identity without a password, and a mock mailbox " +
+          "serves fixture data as if it were the user's own mail. There is no " +
+          "opt-out for these two — set them to \"live\" and configure the provider, " +
+          "or \"disabled\" to turn the feature off honestly.",
+      );
+    }
+
+    const integrationMocks: string[] = [];
+    if (value.PRAVA_MODE === "mock") integrationMocks.push("PRAVA_MODE");
+    if (value.CHECKOUT_ADAPTER_MODE === "mock") integrationMocks.push("CHECKOUT_ADAPTER_MODE");
+    if (value.LINQ_MODE === "mock") integrationMocks.push("LINQ_MODE");
+    if (value.WHATSAPP_MODE === "mock") integrationMocks.push("WHATSAPP_MODE");
+    if (value.MAIL_MODE === "mock") integrationMocks.push("MAIL_MODE");
+    if (value.MAIL_OUTBOUND_MODE === "mock") integrationMocks.push("MAIL_OUTBOUND_MODE");
+
+    // These fake money and messaging rather than identity, so a demo deployment
+    // may keep them — but only by saying so out loud, and it is logged on every
+    // boot. What is forbidden is arriving here by default and not knowing.
+    if (integrationMocks.length > 0 && !value.ALLOW_MOCK_INTEGRATIONS) {
+      throw new Error(
+        `${integrationMocks.join(", ")} ${integrationMocks.length === 1 ? "is" : "are"} ` +
+          `"mock" in production, so nothing real happens: payments are fake, ` +
+          "messages are never delivered. Configure the real credentials, or set " +
+          "ALLOW_MOCK_INTEGRATIONS=true to run a deliberate demo deployment.",
+      );
     }
   }
   if (value.OAUTH_MODE === "live") {

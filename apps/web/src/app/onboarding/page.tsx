@@ -1,359 +1,544 @@
 "use client";
 
-/**
- * Screen B — Onboarding.
- *
- * Three steps: connect a source, register the passkey, then watch the first
- * inventory assemble itself. The scan is the payoff — subscriptions stream in
- * one at a time with the running total climbing, so the value lands before the
- * user has done any work.
- *
- * ⚠️  Every connection is simulated. No OAuth, no WebAuthn, no mailbox is read.
- */
-
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useReducedMotion } from "motion/react";
-import { ArrowRight, Check, CreditCard, Fingerprint, Inbox, Mail } from "lucide-react";
-import { Mark, Wordmark } from "@/components/brand/Mark";
-import { Button, ButtonLink } from "@/components/ui/Button";
-import { Card, Tag, Marker, VendorMark } from "@/components/ui/Primitives";
-import { BigMoney, Money } from "@/components/ui/Money";
-import { StreamingText } from "@/components/ui/StreamingText";
-import { connectSource, registerPasskey, runFirstScan } from "@/lib/mock/mockApi";
-import type { Subscription } from "@/lib/domain/types";
-import { annualise, cx, money } from "@/lib/format";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Eye,
+  EyeOff,
+  Mail,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
+import { Artwork } from "@/components/site/Artwork";
+import { Wordmark } from "@/components/brand/Mark";
+import { apiFetch, mailboxConnectUrl, oauthUrl, RenewlyApiError } from "@/lib/api/client";
+import type { MeResponse, PublicUser } from "@/lib/api/types";
+import styles from "./onboarding.module.css";
 
-type Step = "connect" | "passkey" | "scan" | "done";
+type Stage = "account" | "verify" | "mandate";
+type AuthMode = "signup" | "login";
 
-const SOURCES = [
-  {
-    id: "src_alias",
-    icon: Inbox,
-    label: "Forwarding alias",
-    detail: "northbeam@in.renewly.app",
-    blurb: "Forward receipts. Nothing else is read.",
-  },
-  {
-    id: "src_gmail",
-    icon: Mail,
-    label: "Gmail",
-    detail: "ada@northbeam.co",
-    blurb: "Read-only scope, receipts only.",
-  },
-  {
-    id: "src_card",
-    icon: CreditCard,
-    label: "Company card",
-    detail: "Ramp · •••• 4417",
-    blurb: "Statement feed. No spending access.",
-  },
-] as const;
+interface AuthResponse {
+  user: PublicUser;
+  workspaceId: string;
+  verificationRequired?: boolean;
+  verificationCode?: string | null;
+}
 
-export default function OnboardingPage() {
-  const reduce = useReducedMotion();
-  const [step, setStep] = useState<Step>("connect");
-  const [connected, setConnected] = useState<string[]>([]);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [passkeyState, setPasskeyState] = useState<"idle" | "working" | "done">("idle");
-  const [found, setFound] = useState<Subscription[]>([]);
-  const [scanDone, setScanDone] = useState(false);
-  const scanStarted = useRef(false);
+interface AuthConfig {
+  providers: {
+    password: boolean;
+    googleRedirect: boolean;
+    microsoftRedirect: boolean;
+  };
+}
 
-  const total = found.reduce((t, s) => t + annualise(s.amountCents, s.cadence), 0);
+const fieldError = (error: unknown) => {
+  if (!(error instanceof RenewlyApiError)) return "Something interrupted that request. Try again.";
+  if (error.code === "CONFLICT")
+    return "An account already exists for this email. Sign in instead.";
+  if (error.code === "UNAUTHORIZED") return "That email and password do not match.";
+  if (error.code === "RATE_LIMITED") return "Too many attempts. Give it a minute, then try again.";
+  return error.message;
+};
 
-  const handleConnect = useCallback(async (id: string) => {
-    setBusy(id);
-    await connectSource(id);
-    setConnected((c) => [...c, id]);
-    setBusy(null);
-  }, []);
+function OnboardingContent() {
+  const router = useRouter();
+  const search = useSearchParams();
+  const [stage, setStage] = useState<Stage>("account");
+  const [mode, setMode] = useState<AuthMode>(search.get("mode") === "login" ? "login" : "signup");
+  const [providers, setProviders] = useState<AuthConfig["providers"] | null>(null);
+  const [email, setEmail] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [devCode, setDevCode] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(
+    search.get("error") === "access_denied" ? "Sign-in was cancelled. Nothing changed." : null,
+  );
+  const [notice, setNotice] = useState<string | null>(null);
+  const [settings, setSettings] = useState({ budget: "200.00", ceiling: "50.00", teamSize: "1" });
 
-  const handlePasskey = useCallback(async () => {
-    setPasskeyState("working");
-    await registerPasskey();
-    setPasskeyState("done");
-    setTimeout(() => setStep("scan"), 700);
-  }, []);
-
-  /* The reveal: subscriptions stream in one at a time. */
   useEffect(() => {
-    if (step !== "scan" || scanStarted.current) return;
-    scanStarted.current = true;
-    void runFirstScan((sub) => setFound((f) => [...f, sub])).then(() => {
-      setTimeout(() => setScanDone(true), 400);
-    });
-  }, [step]);
+    void apiFetch<AuthConfig>("/v1/auth/config")
+      .then((value) => setProviders(value.providers))
+      .catch(() => null);
 
-  const stepIndex = { connect: 0, passkey: 1, scan: 2, done: 2 }[step];
+    void apiFetch<MeResponse>("/v1/me")
+      .then((me) => {
+        setEmail(me.user.email);
+        if (me.user.emailVerified) {
+          setSettings({
+            budget: me.settings.aiMonthlyBudget ?? "200.00",
+            ceiling: me.settings.spendCeiling ?? "50.00",
+            teamSize: String(me.settings.teamSize),
+          });
+          setStage("mandate");
+        } else {
+          setStage("verify");
+        }
+      })
+      .catch(() => null);
+  }, []);
+
+  useEffect(() => {
+    const connected = search.get("mailbox");
+    const address = search.get("address");
+    if (connected === "connected") setNotice(`${address ?? "Mailbox"} is now connected read-only.`);
+    if (search.get("mailbox_error"))
+      setNotice("Mailbox access was declined. You can connect it later.");
+  }, [search]);
+
+  const progress = useMemo(() => ({ account: 1, verify: 2, mandate: 3 })[stage], [stage]);
+
+  async function submitAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+    const data = new FormData(event.currentTarget);
+    const nextEmail = String(data.get("email") ?? "").trim();
+    setBusy(true);
+    setError(null);
+    try {
+      if (mode === "login") {
+        const response = await apiFetch<AuthResponse>("/v1/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ email: nextEmail, password: String(data.get("password") ?? "") }),
+        });
+        setEmail(nextEmail);
+        setStage(response.user.emailVerified ? "mandate" : "verify");
+      } else {
+        const response = await apiFetch<AuthResponse>("/v1/auth/signup", {
+          method: "POST",
+          body: JSON.stringify({
+            email: nextEmail,
+            password: String(data.get("password") ?? ""),
+            name: String(data.get("name") ?? "").trim(),
+            workspaceName: String(data.get("workspaceName") ?? "").trim(),
+          }),
+        });
+        setEmail(nextEmail);
+        setDevCode(response.verificationCode ?? null);
+        setStage("verify");
+      }
+    } catch (caught) {
+      setError(fieldError(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitVerification(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const code = String(new FormData(event.currentTarget).get("code") ?? "").replace(/\s/g, "");
+    setBusy(true);
+    setError(null);
+    try {
+      await apiFetch("/v1/auth/verify", { method: "POST", body: JSON.stringify({ email, code }) });
+      const me = await apiFetch<MeResponse>("/v1/me");
+      setSettings({
+        budget: me.settings.aiMonthlyBudget ?? "200.00",
+        ceiling: me.settings.spendCeiling ?? "50.00",
+        teamSize: String(me.settings.teamSize),
+      });
+      setStage("mandate");
+    } catch (caught) {
+      const attempts = caught instanceof RenewlyApiError ? caught.details?.attemptsRemaining : null;
+      setError(
+        `${fieldError(caught)}${typeof attempts === "number" ? ` ${attempts} attempts remain.` : ""}`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resend() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await apiFetch<{ retryAfterSeconds: number }>("/v1/auth/resend-code", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      });
+      setNotice(
+        `A fresh code is on its way. You can request another in ${result.retryAfterSeconds}s.`,
+      );
+      setDevCode(null);
+    } catch (caught) {
+      setError(fieldError(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveMandate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await apiFetch("/v1/settings", {
+        method: "PATCH",
+        body: JSON.stringify({
+          aiMonthlyBudget: settings.budget || null,
+          spendCeiling: settings.ceiling || null,
+          teamSize: Number(settings.teamSize),
+          approvalMode: "ask_above_ceiling",
+        }),
+      });
+      const latest = await apiFetch<{ session: unknown | null }>("/v1/agent/sessions/latest");
+      if (!latest.session) {
+        await apiFetch("/v1/agent/sessions", {
+          method: "POST",
+          body: JSON.stringify({ kind: "onboarding" }),
+        });
+      }
+      router.push("/agent");
+    } catch (caught) {
+      setError(fieldError(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
-    <div className="relative min-h-dvh">
-      
-
-      <header className="shell-x relative mx-auto flex h-16 w-full max-w-[880px] items-center justify-between">
-        <Link href="/" className="rounded-md">
-          <Wordmark size={24} />
+    <main className={styles.page}>
+      <section className={styles.artPanel} aria-label="Renewly onboarding">
+        <Artwork scene="onboarding" className={styles.art} />
+        <div className={styles.artScrim} />
+        <Link href="/" className={styles.backLink}>
+          <ArrowLeft size={15} /> Back to Renewly
         </Link>
-        <span className="label">
-          Step {stepIndex + 1} of 3
-        </span>
-      </header>
-
-      {/* Progress rail */}
-      <div className="shell-x relative mx-auto w-full max-w-[880px]">
-        <div className="flex gap-1.5">
-          {["Connect", "Secure", "Inventory"].map((label, i) => (
-            <div key={label} className="flex-1">
-              <div
-                className={cx(
-                  "h-[2px] rounded-full transition-colors duration-[var(--dur-slow)]",
-                  i <= stepIndex ? "bg-forest" : "bg-press",
-                )}
-              />
-              <p
-                className={cx(
-                  "mt-2 label transition-colors",
-                  i <= stepIndex ? "text-ink-2" : "text-ink-4",
-                )}
-              >
-                {label}
-              </p>
-            </div>
-          ))}
+        <div className={styles.artCopy}>
+          <p>Authority before autonomy</p>
+          <blockquote>
+            See every commitment.
+            <br />
+            <em>Decide what deserves to stay.</em>
+          </blockquote>
+          <span>Read-only signals · explicit limits · receipts for every outcome</span>
         </div>
-      </div>
+      </section>
 
-      <main className="shell-x relative mx-auto w-full max-w-[880px] pb-24 pt-12">
-          {/* ── Connect ─────────────────────────────────────────────────── */}
-          {step === "connect" && (
-            <div key="connect" className={cx(!reduce && "stage-in")}>
-              <Marker>Detect</Marker>
-              <h1 className="mt-4 max-w-[18ch] font-serif text-display-l">
-                Show me where the receipts land.
-              </h1>
-              <p className="mt-4 max-w-[56ch] text-body text-ink-3">
-                Connect one source and I&rsquo;ll build your inventory in about a minute. I only
-                read billing receipts and statement lines — never your mail, never your files.
+      <section className={styles.formPanel}>
+        <header className={styles.mobileHeader}>
+          <Link href="/">
+            <Wordmark size={24} />
+          </Link>
+          <span>{progress} / 3</span>
+        </header>
+
+        <div className={styles.formInner}>
+          <div className={styles.progress} aria-label={`Step ${progress} of 3`}>
+            {[1, 2, 3].map((item) => (
+              <i key={item} data-active={item <= progress} />
+            ))}
+          </div>
+
+          {stage === "account" && (
+            <div className={styles.stage}>
+              <p className={styles.eyebrow}>
+                {mode === "signup" ? "Begin with your mandate" : "Welcome back"}
               </p>
-
-              <div className="mt-8 grid gap-3 sm:grid-cols-3">
-                {SOURCES.map((s) => {
-                  const isConnected = connected.includes(s.id);
-                  const isBusy = busy === s.id;
-                  const Icon = s.icon;
-                  return (
-                    <Card
-                      key={s.id}
-                      className={cx(
-                        "flex flex-col p-4 transition-colors",
-                        isConnected && "border-forest/30",
-                      )}
-                    >
-                      <span
-                        className={cx(
-                          "grid size-10 place-items-center rounded-lg border",
-                          isConnected
-                            ? "border-forest/30 bg-[var(--forest-soft)]"
-                            : "border-rule-firm bg-sunk",
-                        )}
-                      >
-                        <Icon
-                          className={cx("size-4", isConnected ? "text-forest" : "text-ink-3")}
-                          strokeWidth={1.75}
-                        />
-                      </span>
-                      <p className="mt-3.5 text-body font-medium text-ink">{s.label}</p>
-                      <p className="mt-0.5 truncate figure text-caption text-ink-4">
-                        {s.detail}
-                      </p>
-                      <p className="mt-2 flex-1 text-body-s text-ink-3">{s.blurb}</p>
-                      {/* Three equal choices, so none of them is *the* primary
-                          action — "Continue" is. See DESIGN.md §2.2. */}
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="mt-4"
-                        disabled={isConnected || isBusy}
-                        onClick={() => void handleConnect(s.id)}
-                      >
-                        {isConnected ? (
-                          <>
-                            <Check className="size-3.5" /> Connected
-                          </>
-                        ) : isBusy ? (
-                          "Connecting…"
-                        ) : (
-                          "Connect"
-                        )}
-                      </Button>
-                    </Card>
-                  );
-                })}
-              </div>
-
-              <div className="mt-8 flex items-center gap-4">
-                <Button
-                  variant="primary"
-                  size="lg"
-                  disabled={connected.length === 0}
-                  onClick={() => setStep("passkey")}
-                >
-                  Continue
-                  <ArrowRight className="size-4" />
-                </Button>
-                <span className="label">
-                  {connected.length === 0 ? "Connect at least one" : `${connected.length} connected`}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* ── Passkey ─────────────────────────────────────────────────── */}
-          {step === "passkey" && (
-            <div key="passkey" className={cx(!reduce && "stage-in")}>
-              <Marker>Approve</Marker>
-              <h1 className="mt-4 max-w-[20ch] font-serif text-display-l">
-                Nothing moves without your thumb.
-              </h1>
-              <p className="mt-4 max-w-[58ch] text-body text-ink-3">
-                Register a passkey. Every action that touches money will ask for it — no password,
-                no fallback, no way for me to route around you.
-              </p>
-
-              <Card className="mt-8 max-w-[30rem] p-6">
-                <div className="flex items-start gap-4">
-                  <span
-                    className={cx(
-                      "grid size-12 shrink-0 place-items-center rounded-lg border transition-colors",
-                      passkeyState === "done"
-                        ? "border-forest/30 bg-[var(--forest-soft)]"
-                        : "border-rule-firm bg-sunk",
-                    )}
-                  >
-                    {passkeyState === "done" ? (
-                      <Check className="size-5 text-forest" strokeWidth={2.5} />
-                    ) : (
-                      <Fingerprint
-                        className={cx(
-                          "size-5",
-                          passkeyState === "working" ? "text-forest" : "text-ink-3",
-                        )}
-                        strokeWidth={1.75}
-                      />
-                    )}
-                  </span>
-                  <div className="min-w-0">
-                    <p className="text-body font-medium text-ink">MacBook Pro · Touch ID</p>
-                    <p className="mt-0.5 text-body-s text-ink-3">
-                      {passkeyState === "idle" && "This device supports platform passkeys."}
-                      {passkeyState === "working" && "Waiting for your fingerprint…"}
-                      {passkeyState === "done" && "Registered. You're the only approver."}
-                    </p>
-                  </div>
-                </div>
-
-                <Button
-                  variant="primary"
-                  size="lg"
-                  className="mt-5 w-full"
-                  disabled={passkeyState !== "idle"}
-                  onClick={() => void handlePasskey()}
-                >
-                  {passkeyState === "idle" && "Register passkey"}
-                  {passkeyState === "working" && "Hold…"}
-                  {passkeyState === "done" && "Registered"}
-                </Button>
-
-                <p className="mt-3 text-center label">
-                  Simulated · no credential is created
-                </p>
-              </Card>
-            </div>
-          )}
-
-          {/* ── Scan ────────────────────────────────────────────────────── */}
-          {step === "scan" && (
-            <div key="scan" className={cx(!reduce && "stage-in")}>
-              <div className="flex flex-col items-center text-center">
-                <Mark size={72} state={scanDone ? "settled" : "scanning"} />
-                <h1 className="mt-7 max-w-[20ch] font-serif text-display-l">
-                  {scanDone ? "Here's what you're paying for." : "Reading your receipts."}
-                </h1>
-                <p className="mt-4 max-w-[52ch] text-body text-ink-3">
-                  <StreamingText
-                    text={
-                      scanDone
-                        ? `${found.length} subscriptions, ${money(total)} a year. I've already spotted where it's leaking.`
-                        : "Matching invoices, card lines and renewal notices…"
-                    }
-                    instant={!scanDone}
-                    showCaret={false}
-                  />
-                </p>
-
-                <div className="mt-8">
-                  <p className="label">Annual spend found</p>
-                  <div className="mt-2">
-                    <BigMoney value={total} tone="default" />
-                  </div>
-                </div>
-              </div>
-
-              {/* Streamed findings */}
-              <Card className="mt-10 divide-y divide-[var(--rule)]">
-                  {found.map((s, i) => (
-                    <div
-                      key={s.id}
-                      className={cx(
-                        "flex items-center gap-3 px-4 py-3",
-                        !reduce && "slide-in",
-                      )}
-                    >
-                      <span className="w-7 shrink-0 figure text-caption figure text-ink-4">
-                        {(i + 1).toString().padStart(2, "0")}
-                      </span>
-                      <VendorMark initials={s.initials} size={30} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-body-s font-medium text-ink">
-                            {s.vendor}
-                          </span>
-                          {s.status !== "active" && <Tag tone="claret">{s.status}</Tag>}
-                        </div>
-                        <p className="truncate text-caption text-ink-4">{s.evidence}</p>
-                      </div>
-                      <Money value={s.amountCents} className="text-body-s" />
-                    </div>
-                  ))}
-        
-                {!scanDone && (
-                  <div className="flex items-center gap-3 px-4 py-3.5 text-body-s text-ink-4">
-                    <Mark size={20} state="scanning" />
-                    Scanning…
-                  </div>
+              <h1>
+                {mode === "signup" ? (
+                  <>
+                    Own your spend.
+                    <br />
+                    <em>Keep your attention.</em>
+                  </>
+                ) : (
+                  <>
+                    Return to your
+                    <br />
+                    <em>control room.</em>
+                  </>
                 )}
-              </Card>
+              </h1>
+              <p className={styles.lede}>
+                {mode === "signup"
+                  ? "Create the workspace that will hold your recurring commitments, rules, and proof."
+                  : "Sign in to resume your agent and its finance-grade memory."}
+              </p>
 
-              {scanDone && (
-                <div
-                  className={cx(
-                    "mt-8 flex flex-col items-center gap-4 sm:flex-row sm:justify-center",
-                    !reduce && "stage-in",
+              {(providers?.googleRedirect || providers?.microsoftRedirect) && (
+                <div className={styles.socials}>
+                  {providers.googleRedirect && (
+                    <a href={oauthUrl("google")}>
+                      <span className={styles.google}>G</span> Continue with Google
+                    </a>
                   )}
-                >
-                  <ButtonLink href="/agent" variant="primary" size="lg">
-                    See what I&rsquo;d do about it
-                    <ArrowRight className="size-4" />
-                  </ButtonLink>
-                  <ButtonLink href="/dashboard" variant="quiet" size="lg">
-                    Just show me the list
-                  </ButtonLink>
+                  {providers.microsoftRedirect && (
+                    <a href={oauthUrl("microsoft")}>
+                      <span className={styles.microsoft}>⊞</span> Continue with Microsoft
+                    </a>
+                  )}
                 </div>
               )}
+
+              {providers && (providers.googleRedirect || providers.microsoftRedirect) && (
+                <div className={styles.or}>
+                  <span>or use email</span>
+                </div>
+              )}
+
+              <form className={styles.form} onSubmit={submitAccount}>
+                {mode === "signup" && (
+                  <div className={styles.twoFields}>
+                    <label>
+                      <span>Your name</span>
+                      <input name="name" autoComplete="name" placeholder="Ada Lovelace" required />
+                    </label>
+                    <label>
+                      <span>Workspace</span>
+                      <input
+                        name="workspaceName"
+                        autoComplete="organization"
+                        placeholder="Northwind"
+                        required
+                      />
+                    </label>
+                  </div>
+                )}
+                <label>
+                  <span>Work email</span>
+                  <input
+                    name="email"
+                    type="email"
+                    autoComplete="email"
+                    placeholder="ada@northwind.co"
+                    required
+                  />
+                </label>
+                <label>
+                  <span>Password</span>
+                  <div className={styles.password}>
+                    <input
+                      name="password"
+                      type={passwordVisible ? "text" : "password"}
+                      autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                      minLength={mode === "signup" ? 8 : 1}
+                      placeholder={mode === "signup" ? "At least 8 characters" : "Your password"}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setPasswordVisible((value) => !value)}
+                      aria-label={passwordVisible ? "Hide password" : "Show password"}
+                    >
+                      {passwordVisible ? <EyeOff /> : <Eye />}
+                    </button>
+                  </div>
+                </label>
+                {error && (
+                  <p className={styles.error} role="alert">
+                    {error}
+                  </p>
+                )}
+                <button className={styles.primary} disabled={busy}>
+                  {busy
+                    ? "Opening your workspace…"
+                    : mode === "signup"
+                      ? "Create my workspace"
+                      : "Sign in"}
+                  <ArrowRight />
+                </button>
+              </form>
+              <button
+                className={styles.modeSwitch}
+                onClick={() => {
+                  setMode(mode === "signup" ? "login" : "signup");
+                  setError(null);
+                }}
+              >
+                {mode === "signup"
+                  ? "Already have a workspace? Sign in"
+                  : "New to Renewly? Create a workspace"}
+              </button>
             </div>
           )}
-      </main>
-    </div>
+
+          {stage === "verify" && (
+            <div className={styles.stage}>
+              <div className={styles.seal}>
+                <Mail />
+              </div>
+              <p className={styles.eyebrow}>Prove the address</p>
+              <h1>
+                Check your inbox.
+                <br />
+                <em>Then take control.</em>
+              </h1>
+              <p className={styles.lede}>
+                We sent a six-digit code to <strong>{email}</strong>. The workspace is ready; this
+                is the last gate.
+              </p>
+              {devCode && (
+                <button
+                  className={styles.devCode}
+                  onClick={() => navigator.clipboard.writeText(devCode)}
+                >
+                  <span>Local development code</span>
+                  <strong>{devCode}</strong>
+                  <small>Click to copy</small>
+                </button>
+              )}
+              <form className={styles.form} onSubmit={submitVerification}>
+                <label>
+                  <span>Verification code</span>
+                  <input
+                    className={styles.code}
+                    name="code"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={12}
+                    placeholder="000000"
+                    autoFocus
+                    required
+                  />
+                </label>
+                {notice && <p className={styles.notice}>{notice}</p>}
+                {error && (
+                  <p className={styles.error} role="alert">
+                    {error}
+                  </p>
+                )}
+                <button className={styles.primary} disabled={busy}>
+                  {busy ? "Verifying…" : "Verify and continue"}
+                  <ArrowRight />
+                </button>
+              </form>
+              <button className={styles.modeSwitch} onClick={() => void resend()} disabled={busy}>
+                Send a new code
+              </button>
+            </div>
+          )}
+
+          {stage === "mandate" && (
+            <div className={styles.stage}>
+              <p className={styles.eyebrow}>Set the first boundary</p>
+              <h1>
+                A mandate.
+                <br />
+                <em>Never a blank cheque.</em>
+              </h1>
+              <p className={styles.lede}>
+                Give Renewly a ceiling and one read-only source. Anything outside it will wait for
+                you.
+              </p>
+
+              <div className={styles.connectors}>
+                <a href={mailboxConnectUrl("gmail")}>
+                  <Mail />
+                  <span>
+                    <strong>Connect Gmail</strong>
+                    <small>Billing mail only · read-only</small>
+                  </span>
+                  <ArrowRight />
+                </a>
+                <a href={mailboxConnectUrl("outlook")}>
+                  <Mail />
+                  <span>
+                    <strong>Connect Outlook</strong>
+                    <small>Billing mail only · read-only</small>
+                  </span>
+                  <ArrowRight />
+                </a>
+              </div>
+              {notice && (
+                <p className={styles.notice}>
+                  <Check />
+                  {notice}
+                </p>
+              )}
+
+              <form className={styles.form} onSubmit={saveMandate}>
+                <div className={styles.mandateSheet}>
+                  <label>
+                    <span>Monthly recurring budget</span>
+                    <div className={styles.moneyInput}>
+                      <b>$</b>
+                      <input
+                        value={settings.budget}
+                        onChange={(event) =>
+                          setSettings({ ...settings, budget: event.target.value })
+                        }
+                        inputMode="decimal"
+                        pattern="\d+(\.\d{1,2})?"
+                        required
+                      />
+                    </div>
+                    <small>The total envelope you want Renewly to watch.</small>
+                  </label>
+                  <label>
+                    <span>Ask me above</span>
+                    <div className={styles.moneyInput}>
+                      <b>$</b>
+                      <input
+                        value={settings.ceiling}
+                        onChange={(event) =>
+                          setSettings({ ...settings, ceiling: event.target.value })
+                        }
+                        inputMode="decimal"
+                        pattern="\d+(\.\d{1,2})?"
+                        required
+                      />
+                    </div>
+                    <small>Each action above this amount waits for approval.</small>
+                  </label>
+                  <label>
+                    <span>People in the workspace</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="10000"
+                      value={settings.teamSize}
+                      onChange={(event) =>
+                        setSettings({ ...settings, teamSize: event.target.value })
+                      }
+                      required
+                    />
+                    <small>Used to spot surplus seats.</small>
+                  </label>
+                </div>
+                <div className={styles.assurances}>
+                  <span>
+                    <ShieldCheck /> Human approval above ${settings.ceiling || "0"}
+                  </span>
+                  <span>
+                    <Sparkles /> Policy can be changed any time
+                  </span>
+                </div>
+                {error && (
+                  <p className={styles.error} role="alert">
+                    {error}
+                  </p>
+                )}
+                <button className={styles.primary} disabled={busy}>
+                  {busy ? "Saving your mandate…" : "Enter the control room"}
+                  <ArrowRight />
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+export default function OnboardingPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className={styles.loadingState}>
+          <Wordmark size={30} />
+          <span>Preparing your workspace…</span>
+        </div>
+      }
+    >
+      <OnboardingContent />
+    </Suspense>
   );
 }

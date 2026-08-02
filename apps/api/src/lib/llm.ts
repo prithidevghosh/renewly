@@ -226,7 +226,12 @@ class OpenAiLlmClient implements LlmClient {
         if (parsed.success) return parsed.data;
         logger.warn({ name, attempt, issues: parsed.error.issues }, "llm output failed schema");
       } catch (error) {
-        logger.warn({ err: error, name, attempt }, "llm call failed");
+        // Error, not warn: a key is configured and being paid for, so a failing
+        // call is a fault to investigate rather than routine noise. The caller
+        // still falls back to the heuristic parser and labels the result
+        // `parser: "heuristic"`, so the degradation is visible in the response
+        // as well as the logs — but it must not pass unnoticed here.
+        logger.error({ err: error, name, attempt }, "llm call failed");
       }
     }
     return null;

@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { env } from "../../../env.js";
 import { AppError } from "../../../lib/errors.js";
+import { assertMockAuthAllowed } from "./providers.js";
 import type { OAuthExchange } from "./types.js";
 
 /**
@@ -52,6 +53,9 @@ export function setGoogleKeySet(next: ReturnType<typeof createRemoteJWKSet> | nu
  * convention the redirect mock uses.
  */
 export async function verifyGoogleIdToken(credential: string): Promise<OAuthExchange> {
+  if (env.OAUTH_MODE === "disabled") {
+    throw new AppError("VALIDATION_ERROR", "Google sign-in is turned off on this deployment");
+  }
   if (env.OAUTH_MODE === "mock") return mockExchange(credential);
 
   if (!env.GOOGLE_CLIENT_ID) {
@@ -95,6 +99,10 @@ export async function verifyGoogleIdToken(credential: string): Promise<OAuthExch
 }
 
 function mockExchange(credential: string): OAuthExchange {
+  // Same door, same lock: this path mints a session from a string, so it must
+  // be unreachable in production regardless of how configuration got here.
+  assertMockAuthAllowed();
+
   const parts = credential.split(":");
   if (parts[0] !== "mock") {
     throw new AppError("UNAUTHORIZED", "That Google credential is not valid");

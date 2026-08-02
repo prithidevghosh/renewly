@@ -24,6 +24,17 @@ const ARTWORKS = {
     scale: 1.03,
     mobileScale: 1.06,
   },
+  onboarding: {
+    // Purpose-shot Midjourney sources remain in /assets as PNG originals. The
+    // page serves optimized derivatives and keeps every responsive crop here.
+    src: "/assets/onboarding-portrait.jpg",
+    mobileSrc: "/assets/onboarding-mobile.jpg",
+    position: "68% 50%",
+    mobilePosition: "50% 50%",
+    scale: 1.02,
+    mobileScale: 1,
+    eager: true,
+  },
   thread: {
     src: "/assets/thread_plate.jpg",
     position: "58% 50%",
@@ -74,7 +85,9 @@ export function Artwork({ scene, className = "" }: { scene: ArtworkScene; classN
   return (
     <span className={`art art-${scene} ${className}`.trim()} style={style} aria-hidden="true">
       <picture>
-        {"mobileSrc" in art ? <source media="(max-aspect-ratio: 1/1)" srcSet={art.mobileSrc} /> : null}
+        {"mobileSrc" in art ? (
+          <source media="(max-aspect-ratio: 1/1)" srcSet={art.mobileSrc} />
+        ) : null}
         <img
           src={art.src}
           alt=""

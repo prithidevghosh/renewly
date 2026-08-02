@@ -120,9 +120,17 @@ authRoutes.get("/config", (c) =>
       password: true,
       // The popup flow needs only a client id, so it is available whenever one
       // is configured — no secret, no registered redirect URI.
-      googleOneTap: Boolean(env.GOOGLE_CLIENT_ID) || env.OAUTH_MODE === "mock",
-      googleRedirect: Boolean(env.GOOGLE_CLIENT_SECRET) || env.OAUTH_MODE === "mock",
-      microsoftRedirect: Boolean(env.MICROSOFT_CLIENT_SECRET) || env.OAUTH_MODE === "mock",
+      // Report only what will actually work, so the client never draws a button
+      // that 400s. `disabled` hides them entirely.
+      googleOneTap:
+        env.OAUTH_MODE === "mock" ||
+        (env.OAUTH_MODE === "live" && Boolean(env.GOOGLE_CLIENT_ID)),
+      googleRedirect:
+        env.OAUTH_MODE === "mock" ||
+        (env.OAUTH_MODE === "live" && Boolean(env.GOOGLE_CLIENT_SECRET)),
+      microsoftRedirect:
+        env.OAUTH_MODE === "mock" ||
+        (env.OAUTH_MODE === "live" && Boolean(env.MICROSOFT_CLIENT_SECRET)),
     },
     oauthMode: env.OAUTH_MODE,
   }),

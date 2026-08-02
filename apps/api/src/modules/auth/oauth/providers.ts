@@ -212,7 +212,13 @@ class MicrosoftOAuthClient extends BaseOAuthClient {
 export class MockOAuthClient implements OAuthClient {
   readonly mode = "mock" as const;
 
-  constructor(readonly provider: SocialProvider) {}
+  constructor(readonly provider: SocialProvider) {
+    // env.ts already refuses to boot with OAUTH_MODE=mock in production. This
+    // is the second lock on the same door: mock sign-in accepts any identity
+    // without a credential, so it must be impossible to reach in production
+    // even through a code path that skipped the boot check.
+    assertMockAuthAllowed();
+  }
 
   authorizeUrl(input: AuthorizeInput): string {
     const url = new URL(`${env.API_URL}/v1/auth/oauth/${this.provider}/callback`);
@@ -246,6 +252,20 @@ export class MockOAuthClient implements OAuthClient {
   }
 }
 
+/**
+ * Refuses mock sign-in outside development and test. Exported so the ID-token
+ * path enforces the identical rule — two entrances, one guard.
+ */
+export function assertMockAuthAllowed(): void {
+  if (env.NODE_ENV === "production") {
+    throw new AppError(
+      "INTERNAL_ERROR",
+      "Mock sign-in is not available in production. It accepts any identity " +
+        "without a credential and must never authenticate a real request.",
+    );
+  }
+}
+
 const overrides = new Map<SocialProvider, OAuthClient>();
 
 /** Tests substitute a client here. */
@@ -262,6 +282,11 @@ export function getOAuthClient(provider: SocialProvider): OAuthClient {
   const override = overrides.get(provider);
   if (override) return override;
 
+  if (env.OAUTH_MODE === "disabled") {
+    throw new AppError("VALIDATION_ERROR", "Social sign-in is turned off on this deployment", {
+      provider,
+    });
+  }
   if (env.OAUTH_MODE === "mock") return new MockOAuthClient(provider);
 
   const configured =

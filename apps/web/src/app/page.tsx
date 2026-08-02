@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import "./site.css";
 import { Motion } from "@/components/site/Motion";
 import { Console } from "@/components/site/Console";
@@ -6,7 +7,6 @@ import { Chart } from "@/components/site/Chart";
 import { Thread } from "@/components/site/Thread";
 import { Logo, VENDORS } from "@/components/site/brand-marks";
 import { Artwork } from "@/components/site/Artwork";
-import { WaitlistButton } from "@/components/site/WaitlistButton";
 import { ContactButton } from "@/components/site/ContactButton";
 
 /**
@@ -121,9 +121,9 @@ export default function LandingPage() {
           <a className="quiet" href="#thread">
             In the thread
           </a>
-          <WaitlistButton source="landing-nav" className="btn">
-            Join the waitlist
-          </WaitlistButton>
+          <Link href="/onboarding" className="btn">
+            Own your spend
+          </Link>
         </div>
       </header>
 
@@ -143,10 +143,10 @@ export default function LandingPage() {
             vendor change to finance-grade proof.
           </p>
           <div className="row up" data-d="320">
-            <WaitlistButton source="landing-hero" className="btn pale">
-              Join the waitlist
+            <Link href="/onboarding" className="btn pale">
+              Own your spend
               <Arrow />
-            </WaitlistButton>
+            </Link>
             <a className="btn line" href="#thread">
               Watch it work
             </a>
@@ -347,10 +347,10 @@ export default function LandingPage() {
             the first entry in a living system for everything your company pays on repeat.
           </p>
           <div className="row up" data-d="280">
-            <WaitlistButton source="landing-closing" className="btn pale">
-              Join the waitlist
+            <Link href="/onboarding" className="btn pale">
+              Own your spend
               <Arrow />
-            </WaitlistButton>
+            </Link>
             <a className="btn line" href="#how">
               See the control loop
             </a>

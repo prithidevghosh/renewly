@@ -68,6 +68,27 @@ Every failure has the same shape:
 
 ---
 
+## 1a. Modes: real, off, or fake
+
+Every integration has a mode, and the client should read `/v1/auth/config` rather than assume.
+
+| Mode | Meaning |
+|---|---|
+| `live` | Talks to the real provider |
+| `disabled` | The feature is off. Endpoints return `400 VALIDATION_ERROR` saying so — **hide the button** |
+| `mock` | Fake responses for local development and tests |
+
+**Production refuses to boot on `mock`.** `OAUTH_MODE` and `MAILBOX_MODE` have no opt-out at all,
+because mock auth accepts any identity without a credential and a mock mailbox serves fixture data
+as if it were the user's own mail. Payments and messaging may run mocked in a deliberate demo
+deployment, but only with `ALLOW_MOCK_INTEGRATIONS=true` set explicitly.
+
+The practical consequence for the frontend: a deployment may legitimately have **no** Google button
+and **no** mailbox step. `/v1/auth/config` tells you which are usable; render from that, never from
+a hardcoded assumption.
+
+---
+
 ## 2. Auth
 
 ### 2.1 Password signup and verification **[LIVE]**
@@ -183,7 +204,8 @@ this flow and the redirect flow below resolve to the **same account** for the sa
 they are two doors to one identity, not two accounts.
 
 In `OAUTH_MODE=mock` the credential is `mock:<subject>:<email>`, so the whole flow is testable with
-`curl` and no Google involvement.
+`curl` and no Google involvement. **Mock is a local and test mode only — production refuses to
+boot with it**, because it authenticates any identity without a credential.
 
 ### 2.3 Google and Microsoft sign-in **[LIVE]**
 
@@ -225,7 +247,7 @@ its owner signs in with a provider that has confirmed the address.
 
 #### Local development
 
-`OAUTH_MODE=mock` (the default) needs no Google or Microsoft credentials. `/start` redirects
+`OAUTH_MODE=mock` (the local default) needs no Google or Microsoft credentials. `/start` redirects
 straight to the callback with a synthetic code of the form `mock:<subject>:<email>`, so the whole
 flow — including linking — is exercisable locally. Set `OAUTH_MODE=live` plus
 `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` and/or `MICROSOFT_CLIENT_ID`/`MICROSOFT_CLIENT_SECRET`
@@ -508,7 +530,7 @@ returned — they can be large and are only needed server-side.
 
 ### Local development
 
-`MAILBOX_MODE=mock` (the default) serves the repository's own email fixtures — real renewal notices
+`MAILBOX_MODE=mock` (the local default) serves the repository's own email fixtures — real renewal notices
 from Anthropic, Figma and Midjourney — so the entire connect → fetch → detect flow is demoable with
 no real inbox and no Google review. The consent redirect goes straight to the callback with a code
 of the form `mock:<provider>:<address>`.
