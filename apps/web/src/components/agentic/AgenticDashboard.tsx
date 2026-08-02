@@ -9,17 +9,15 @@ import {
   ChevronRight,
   CircleStop,
   ExternalLink,
-  Inbox,
+  FileText,
+  FolderOpen,
   LoaderCircle,
-  LogOut,
   Mail,
   Play,
   RefreshCw,
-  Settings2,
   ShieldCheck,
-  Sparkles,
 } from "lucide-react";
-import { Mark, Wordmark } from "@/components/brand/Mark";
+import { Artwork } from "@/components/site/Artwork";
 import { apiFetch, API_ORIGIN, mailboxConnectUrl, RenewlyApiError } from "@/lib/api/client";
 import type {
   AgentEvent,
@@ -32,6 +30,21 @@ import type {
   WorkspaceSettings,
 } from "@/lib/api/types";
 import styles from "./AgenticDashboard.module.css";
+
+/**
+ * How far back a sweep reads. Mirrors LOOKBACK_DAYS on the API, which is the
+ * authority — it rejects anything not in this set, so the two lists have to
+ * agree. A month is the default because every monthly plan bills at least once
+ * inside it, and each wider window re-reads the mailbox in full.
+ */
+const LOOKBACK_OPTIONS = [
+  { days: 15, label: "15 days" },
+  { days: 30, label: "1 month" },
+  { days: 60, label: "2 months" },
+  { days: 90, label: "3 months" },
+] as const;
+
+const DEFAULT_LOOKBACK_DAYS = 30;
 
 const EVENT_TYPES = [
   "session.started",
@@ -165,6 +178,7 @@ export function AgenticDashboard() {
   const [saving, setSaving] = useState(false);
   const [news, setNews] = useState<NewsArticle[]>([]);
   const [newsState, setNewsState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [lookbackDays, setLookbackDays] = useState<number>(DEFAULT_LOOKBACK_DAYS);
   const eventCursor = useRef(0);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const sessionId = data?.session?.id;
@@ -257,11 +271,17 @@ export function AgenticDashboard() {
       ) {
         void apiFetch<{ session: AgentSession; openPrompts: AgentPrompt[] }>(
           `/v1/agent/sessions/${sessionId}`,
-        ).then((fresh) =>
-          setData((current) =>
-            current ? { ...current, session: fresh.session, prompts: fresh.openPrompts } : current,
-          ),
-        );
+        )
+          .then((fresh) =>
+            setData((current) =>
+              current
+                ? { ...current, session: fresh.session, prompts: fresh.openPrompts }
+                : current,
+            ),
+          )
+          .catch((caught) =>
+            setError(caught instanceof Error ? caught.message : "The session did not refresh."),
+          );
       }
     };
     EVENT_TYPES.forEach((name) => source.addEventListener(name, onAgentEvent as EventListener));
@@ -325,7 +345,7 @@ export function AgenticDashboard() {
     try {
       const result = await apiFetch<{ session: AgentSession }>("/v1/agent/sessions", {
         method: "POST",
-        body: JSON.stringify({ kind }),
+        body: JSON.stringify({ kind, lookbackDays }),
       });
       eventCursor.current = 0;
       setData((current) =>
@@ -400,22 +420,23 @@ export function AgenticDashboard() {
   async function logout() {
     try {
       await apiFetch("/v1/auth/logout", { method: "POST" });
-    } finally {
       router.replace("/");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Sign out failed.");
     }
   }
 
   if (loading)
     return (
       <div className={styles.loading}>
-        <Mark state="scanning" size={40} />
+        <span className={styles.loadingMark}>Renewly</span>
         <p>Opening the control room…</p>
       </div>
     );
   if (!data)
     return (
       <div className={styles.loading}>
-        <Mark size={40} />
+        <span className={styles.loadingMark}>Renewly</span>
         <h1>The control plane is quiet.</h1>
         <p>{error}</p>
         <button
@@ -440,8 +461,8 @@ export function AgenticDashboard() {
   return (
     <main className={styles.cockpit}>
       <header className={styles.header}>
-        <Link href="/" aria-label="Renewly home">
-          <Wordmark size={25} />
+        <Link href="/" aria-label="Renewly home" className={styles.wordmark}>
+          Renewly
         </Link>
         <div className={styles.workspace}>
           <span>{data.me.workspace.name}</span>
@@ -455,11 +476,9 @@ export function AgenticDashboard() {
           </small>
         </div>
         <nav>
-          <Link href="/ledger">Ledger</Link>
-          <Link href="/settings">Settings</Link>
-          <button onClick={() => void logout()} aria-label="Sign out">
-            <LogOut />
-          </button>
+          <a href="#subscriptions">Commitments</a>
+          <a href="#configuration">Mandate</a>
+          <button onClick={() => void logout()}>Sign out</button>
         </nav>
       </header>
 
@@ -470,358 +489,409 @@ export function AgenticDashboard() {
         </div>
       )}
 
-      <section className={styles.terminal}>
-        <div className={styles.terminalHead}>
-          <div>
-            <p>Live agent terminal</p>
-            <h1>
-              {openPrompt
-                ? "A decision is waiting for you."
-                : running
-                  ? "Renewly is reading the field."
-                  : "Everything recurring, under one law."}
-            </h1>
-          </div>
-          <div className={styles.runControls}>
-            {canStart ? (
-              <button onClick={() => void startRun("detect")} disabled={saving}>
-                <Play /> Run a sweep
-              </button>
-            ) : (
-              <button onClick={() => void cancelRun()} disabled={saving}>
-                <CircleStop /> Stop run
-              </button>
-            )}
-            <span data-live={streamState === "live"}>
-              {streamState === "live"
-                ? "Live"
-                : data.session?.status
-                  ? readable(data.session.status)
-                  : "Ready"}
-            </span>
-          </div>
-        </div>
-
-        <div className={styles.transcript} ref={transcriptRef} aria-live="polite">
-          {data.events.length === 0 ? (
-            <div className={styles.emptyTranscript}>
-              <Sparkles />
-              <p>No run has written to this ledger yet.</p>
-              <span>Start a sweep. Events will survive refreshes and reconnect without gaps.</span>
+      <section className={styles.terminal} aria-labelledby="agent-heading">
+        <aside className={styles.agentField}>
+          <Artwork scene="agent" className={styles.terminalArtwork} />
+          <div className={styles.terminalScrim} />
+          <div className={styles.terminalHead}>
+            <div>
+              <p>{data.me.workspace.name}</p>
+              <h1 id="agent-heading">
+                {openPrompt
+                  ? "One decision needs your authority."
+                  : running
+                    ? "The field is being read."
+                    : "Recurring spend, held to your law."}
+              </h1>
             </div>
-          ) : (
-            data.events.map((event) => {
-              const copy = eventCopy(event);
-              const current =
-                typeof event.payload.current === "number" ? event.payload.current : null;
-              const total = typeof event.payload.total === "number" ? event.payload.total : null;
-              return (
-                <article className={styles.event} data-tone={copy.tone} key={event.seq}>
-                  <div className={styles.eventRail}>
-                    <i />
-                    {copy.tone === "working" ? (
-                      <LoaderCircle className={styles.spin} />
-                    ) : copy.tone === "done" ? (
-                      <Check />
-                    ) : (
-                      <ChevronRight />
-                    )}
-                  </div>
-                  <div>
-                    <span>
-                      {String(event.seq).padStart(2, "0")} ·{" "}
-                      {event.step ? readable(event.step) : "Session"}
-                    </span>
-                    <h2>{copy.title}</h2>
-                    {copy.body && <p>{copy.body}</p>}
-                    {current !== null && total ? (
-                      <div className={styles.eventProgress}>
-                        <i style={{ width: `${Math.min(100, (current / total) * 100)}%` }} />
-                      </div>
-                    ) : null}
-                  </div>
-                  <time>
-                    {new Date(event.at).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </time>
-                </article>
-              );
-            })
-          )}
-        </div>
-
-        <div className={styles.promptBar} data-active={Boolean(openPrompt)}>
-          <Mark size={27} state={openPrompt ? "thinking" : running ? "scanning" : "idle"} />
-          {openPrompt ? (
-            <div className={styles.promptBody}>
-              <p>{openPrompt.question}</p>
-              {openPrompt.options.length > 0 ? (
-                <div className={styles.promptOptions}>
-                  {openPrompt.options.map((option) => (
-                    <button
-                      key={option.value}
-                      onClick={() => void answerPrompt(option.value)}
-                      disabled={saving}
-                    >
-                      <strong>{option.label}</strong>
-                      {option.description && <small>{option.description}</small>}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <form
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void answerPrompt(promptAnswer);
-                  }}
-                >
-                  <input
-                    value={promptAnswer}
-                    onChange={(event) => setPromptAnswer(event.target.value)}
-                    placeholder="Type your answer"
-                    autoFocus
-                  />
-                  <button disabled={saving || !promptAnswer.trim()} aria-label="Send answer">
-                    <ArrowRight />
+            <div className={styles.runControls}>
+              {canStart ? (
+                <>
+                  {/* Offered before the run, not during: the window is fixed
+                      once a sweep has started reading. */}
+                  <fieldset className={styles.lookback}>
+                    <legend>Read the last</legend>
+                    <div role="radiogroup" aria-label="How far back to read the mailbox">
+                      {LOOKBACK_OPTIONS.map((option) => (
+                        <button
+                          key={option.days}
+                          type="button"
+                          role="radio"
+                          aria-checked={lookbackDays === option.days}
+                          data-selected={lookbackDays === option.days}
+                          disabled={saving}
+                          onClick={() => setLookbackDays(option.days)}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <button onClick={() => void startRun("detect")} disabled={saving}>
+                    <Play /> Begin a sweep
                   </button>
-                </form>
-              )}
-              {openPrompt.skippable && (
-                <button className={styles.skip} onClick={() => void answerPrompt("skip")}>
-                  Skip this question
+                </>
+              ) : (
+                <button onClick={() => void cancelRun()} disabled={saving}>
+                  <CircleStop /> Stop this run
                 </button>
               )}
-            </div>
-          ) : (
-            <div className={styles.terminalIdle}>
-              <p>{running ? "The worker has the floor." : "The agent is at rest."}</p>
-              <span>
-                {running
-                  ? "New steps and questions will appear here as durable events."
-                  : "Run a sweep when you want Renewly to look again."}
+              <span data-live={streamState === "live"}>
+                {streamState === "live"
+                  ? "Live now"
+                  : data.session?.status
+                    ? readable(data.session.status)
+                    : "Ready when you are"}
               </span>
             </div>
-          )}
-        </div>
+          </div>
+          <p className={styles.fieldNote}>
+            Read-only signals first. Explicit authority before action. A receipt after every
+            outcome.
+          </p>
+        </aside>
+
+        <section className={styles.conversation} aria-label="Agent workspace thread">
+          <header className={styles.conversationHeader}>
+            <div>
+              <p>Workspace thread</p>
+              <span>
+                {data.session
+                  ? `${readable(data.session.kind)} · ${readable(data.session.status)}`
+                  : "No active run"}
+              </span>
+            </div>
+            <span>{data.events.length} durable events</span>
+          </header>
+
+          <div className={styles.transcript} ref={transcriptRef} aria-live="polite">
+            {data.events.length === 0 ? (
+              <div className={styles.emptyTranscript}>
+                <span className={styles.emptyRule} />
+                <p>The ledger is ready for its first reading.</p>
+                <span>
+                  Begin a sweep when you want Renewly to read the workspace. Nothing appears here
+                  unless the control plane returns it.
+                </span>
+              </div>
+            ) : (
+              data.events.map((event) => {
+                const copy = eventCopy(event);
+                const current =
+                  typeof event.payload.current === "number" ? event.payload.current : null;
+                const total = typeof event.payload.total === "number" ? event.payload.total : null;
+                return (
+                  <article className={styles.event} data-tone={copy.tone} key={event.seq}>
+                    <div className={styles.eventRail}>
+                      <i />
+                      {copy.tone === "working" ? (
+                        <LoaderCircle className={styles.spin} />
+                      ) : copy.tone === "done" ? (
+                        <Check />
+                      ) : (
+                        <ChevronRight />
+                      )}
+                    </div>
+                    <div>
+                      <span>
+                        {String(event.seq).padStart(2, "0")} ·{" "}
+                        {event.step ? readable(event.step) : "Session"}
+                      </span>
+                      <h2>{copy.title}</h2>
+                      {copy.body && <p>{copy.body}</p>}
+                      {current !== null && total ? (
+                        <div className={styles.eventProgress}>
+                          <i style={{ width: `${Math.min(100, (current / total) * 100)}%` }} />
+                        </div>
+                      ) : null}
+                    </div>
+                    <time>
+                      {new Date(event.at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </time>
+                  </article>
+                );
+              })
+            )}
+          </div>
+
+          <div className={styles.promptBar} data-active={Boolean(openPrompt)}>
+            <span
+              className={styles.agentState}
+              data-active={Boolean(openPrompt || running)}
+              aria-hidden="true"
+            />
+            {openPrompt ? (
+              <div className={styles.promptBody}>
+                <p>{openPrompt.question}</p>
+                {openPrompt.options.length > 0 ? (
+                  <div className={styles.promptOptions}>
+                    {openPrompt.options.map((option) => (
+                      <button
+                        key={option.value}
+                        onClick={() => void answerPrompt(option.value)}
+                        disabled={saving}
+                      >
+                        <strong>{option.label}</strong>
+                        {option.description && <small>{option.description}</small>}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void answerPrompt(promptAnswer);
+                    }}
+                  >
+                    <input
+                      value={promptAnswer}
+                      onChange={(event) => setPromptAnswer(event.target.value)}
+                      placeholder="Write your instruction"
+                      autoFocus
+                    />
+                    <button disabled={saving || !promptAnswer.trim()} aria-label="Send answer">
+                      <ArrowRight />
+                    </button>
+                  </form>
+                )}
+                {openPrompt.skippable && (
+                  <button className={styles.skip} onClick={() => void answerPrompt("skip")}>
+                    Skip this question
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className={styles.terminalIdle}>
+                <p>{running ? "Renewly has the floor." : "No decision is waiting."}</p>
+                <span>
+                  {running
+                    ? "New evidence and questions will settle here as they arrive."
+                    : "Begin a sweep from the photograph when you want another reading."}
+                </span>
+              </div>
+            )}
+          </div>
+        </section>
       </section>
 
-      <section className={styles.lowerGrid}>
-        <section className={styles.panel}>
-          <PanelHeader
-            icon={<Inbox />}
-            label="Live commitments"
-            meta={`${activeSubscriptions.length} found`}
-          />
-          <div className={styles.panelBody}>
-            {activeSubscriptions.length === 0 ? (
-              <EmptyPanel
-                title="No subscriptions yet"
-                body={
-                  data.mailboxes.some((mailbox) => mailbox.status === "active")
-                    ? "Your mailbox is connected. Run a detect sweep when receipts are ready."
-                    : "Connect a mailbox so Renewly can read billing receipts."
-                }
-                action={
-                  !data.mailboxes.some((mailbox) => mailbox.status === "active") ? (
-                    <a href={mailboxConnectUrl("gmail", "/agent")}>
-                      Connect Gmail <ArrowRight />
-                    </a>
-                  ) : undefined
-                }
-              />
-            ) : (
-              <ul className={styles.subscriptions}>
-                {activeSubscriptions.map((sub) => (
-                  <li key={sub.id}>
-                    <span className={styles.vendorMark}>
-                      {sub.merchantName.slice(0, 2).toUpperCase()}
-                    </span>
-                    <div>
-                      <strong>{sub.merchantName}</strong>
-                      <small>
-                        {sub.planName ?? readable(sub.billingCycle)} · renews{" "}
-                        {shortDate(sub.nextRenewalAt)}
-                      </small>
-                    </div>
-                    <div className={styles.subMoney}>
-                      <strong>{money(sub.amount, sub.currency)}</strong>
-                      <small>
-                        /
-                        {sub.billingCycle === "yearly"
-                          ? "yr"
-                          : sub.billingCycle === "weekly"
-                            ? "wk"
-                            : "mo"}
-                      </small>
-                      {sub.requiresConfirmation && <em>Verify</em>}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
+      <section className={styles.operations} aria-labelledby="workspace-evidence">
+        <header className={styles.operationsIntro}>
+          <div>
+            <p>Workspace evidence</p>
+            <h2 id="workspace-evidence">The commitments, context and law behind every move.</h2>
           </div>
-        </section>
+          <p>
+            Every row is read from your connected workspace. If a source fails, the failure stays
+            visible here instead of being replaced with a plausible number.
+          </p>
+        </header>
 
-        <section className={styles.panel}>
-          <PanelHeader
-            icon={<ExternalLink />}
-            label="Company field notes"
-            meta={newsState === "loading" ? "Reading" : `${news.length} recent`}
-          />
-          <div className={styles.panelBody}>
-            {newsState === "loading" ? (
-              <div className={styles.newsLoading}>
-                {[1, 2, 3].map((item) => (
-                  <i key={item} />
-                ))}
-              </div>
-            ) : newsState === "error" ? (
-              <EmptyPanel
-                title="News is temporarily quiet"
-                body="Subscriptions are unaffected. We’ll try the public feeds again on refresh."
-                action={
-                  <button onClick={() => location.reload()}>
-                    Try again <RefreshCw />
-                  </button>
-                }
-              />
-            ) : news.length === 0 ? (
-              <EmptyPanel
-                title="No relevant coverage found"
-                body={
-                  activeSubscriptions.length
-                    ? "There are no recent public stories for these companies."
-                    : "Company news will appear after subscriptions are detected."
-                }
-              />
-            ) : (
-              <ul className={styles.news}>
-                {news.map((article) => (
-                  <li key={`${article.url}-${article.company}`}>
-                    <a href={article.url} target="_blank" rel="noreferrer">
-                      <span>
-                        {article.company} · {relativeNewsDate(article.publishedAt)}
+        <div className={styles.lowerGrid}>
+          <section className={styles.panel} id="subscriptions">
+            <PanelHeader label="Live commitments" meta={`${activeSubscriptions.length} found`} />
+            <div className={styles.panelBody}>
+              {activeSubscriptions.length === 0 ? (
+                <EmptyPanel
+                  icon={<FileText />}
+                  title="No subscriptions yet"
+                  body={
+                    data.mailboxes.some((mailbox) => mailbox.status === "active")
+                      ? "Your mailbox is connected. Run a detect sweep when receipts are ready."
+                      : "Connect a mailbox so Renewly can read billing receipts."
+                  }
+                  action={
+                    !data.mailboxes.some((mailbox) => mailbox.status === "active") ? (
+                      <a href={mailboxConnectUrl("gmail", "/agent")}>
+                        Connect Gmail <ArrowRight />
+                      </a>
+                    ) : undefined
+                  }
+                />
+              ) : (
+                <ul className={styles.subscriptions}>
+                  {activeSubscriptions.map((sub) => (
+                    <li key={sub.id}>
+                      <span className={styles.vendorMark}>
+                        {sub.merchantName.slice(0, 2).toUpperCase()}
                       </span>
-                      <strong>{article.title}</strong>
-                      <small>
-                        {article.source}
-                        <ExternalLink />
-                      </small>
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </section>
-
-        <section className={styles.panel}>
-          <PanelHeader
-            icon={<Settings2 />}
-            label="Mandate & connections"
-            meta={`Policy v${data.settings.policyVersion}`}
-          />
-          <div className={styles.panelBody}>
-            <div className={styles.connections}>
-              <p>Connected mail</p>
-              {data.mailboxes
-                .filter((mailbox) => mailbox.status !== "revoked")
-                .map((mailbox) => (
-                  <div key={mailbox.id}>
-                    <Mail />
-                    <span>
-                      <strong>{mailbox.emailAddress}</strong>
-                      <small>
-                        {readable(mailbox.provider)} · {readable(mailbox.status)}
-                      </small>
-                    </span>
-                    <i data-ok={mailbox.status === "active"} />
-                  </div>
-                ))}
-              {data.mailboxes.filter((mailbox) => mailbox.status !== "revoked").length === 0 && (
-                <span className={styles.noConnection}>
-                  No read-only mail source{" "}
-                  <a href={mailboxConnectUrl("gmail", "/agent")}>Connect</a>
-                </span>
+                      <div>
+                        <strong>{sub.merchantName}</strong>
+                        <small>
+                          {sub.planName ?? readable(sub.billingCycle)} · renews{" "}
+                          {shortDate(sub.nextRenewalAt)}
+                        </small>
+                      </div>
+                      <div className={styles.subMoney}>
+                        <strong>{money(sub.amount, sub.currency)}</strong>
+                        <small>
+                          /
+                          {sub.billingCycle === "yearly"
+                            ? "yr"
+                            : sub.billingCycle === "weekly"
+                              ? "wk"
+                              : "mo"}
+                        </small>
+                        {sub.requiresConfirmation && <em>Verify</em>}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
-            <form className={styles.policy} onSubmit={saveSettings}>
-              <label>
-                <span>Monthly max cap</span>
-                <div>
-                  <b>$</b>
-                  <input
-                    name="budget"
-                    defaultValue={data.settings.aiMonthlyBudget ?? ""}
-                    inputMode="decimal"
-                    placeholder="No cap"
-                  />
+          </section>
+
+          <section className={styles.panel}>
+            <PanelHeader
+              label="Company field notes"
+              meta={newsState === "loading" ? "Reading" : `${news.length} recent`}
+            />
+            <div className={styles.panelBody}>
+              {newsState === "loading" ? (
+                <div className={styles.newsLoading}>
+                  <LoaderCircle className={styles.spin} />
+                  <p>Reading public company sources…</p>
                 </div>
-              </label>
-              <label>
-                <span>Ask above</span>
-                <div>
-                  <b>$</b>
-                  <input
-                    name="ceiling"
-                    defaultValue={data.settings.spendCeiling ?? ""}
-                    inputMode="decimal"
-                    placeholder="Always ask"
-                  />
-                </div>
-              </label>
-              <div className={styles.policyState}>
-                <ShieldCheck />
-                <span>
-                  <strong>{readable(data.settings.approvalMode)}</strong>
-                  <small>
-                    {data.settings.killSwitch ? "Agent spend is stopped" : "Kill switch ready"}
-                  </small>
-                </span>
+              ) : newsState === "error" ? (
+                <EmptyPanel
+                  icon={<FolderOpen />}
+                  title="Company news could not be loaded"
+                  body="The public news API failed. No substitute articles or sample data are being shown."
+                  action={
+                    <button onClick={() => location.reload()}>
+                      Try again <RefreshCw />
+                    </button>
+                  }
+                />
+              ) : news.length === 0 ? (
+                <EmptyPanel
+                  icon={<FolderOpen />}
+                  title="No relevant coverage found"
+                  body={
+                    activeSubscriptions.length
+                      ? "There are no recent public stories for these companies."
+                      : "Company news will appear after subscriptions are detected."
+                  }
+                />
+              ) : (
+                <ul className={styles.news}>
+                  {news.map((article) => (
+                    <li key={`${article.url}-${article.company}`}>
+                      <a href={article.url} target="_blank" rel="noreferrer">
+                        <span>
+                          {article.company} · {relativeNewsDate(article.publishedAt)}
+                        </span>
+                        <strong>{article.title}</strong>
+                        <small>
+                          {article.source}
+                          <ExternalLink />
+                        </small>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </section>
+
+          <section className={styles.panel} id="configuration">
+            <PanelHeader
+              label="Mandate & connections"
+              meta={`Policy v${data.settings.policyVersion}`}
+            />
+            <div className={styles.panelBody}>
+              <div className={styles.connections}>
+                <p>Connected mail</p>
+                {data.mailboxes
+                  .filter((mailbox) => mailbox.status !== "revoked")
+                  .map((mailbox) => (
+                    <div key={mailbox.id}>
+                      <Mail />
+                      <span>
+                        <strong>{mailbox.emailAddress}</strong>
+                        <small>
+                          {readable(mailbox.provider)} · {readable(mailbox.status)}
+                        </small>
+                      </span>
+                      <i data-ok={mailbox.status === "active"} />
+                    </div>
+                  ))}
+                {data.mailboxes.filter((mailbox) => mailbox.status !== "revoked").length === 0 && (
+                  <span className={styles.noConnection}>
+                    No read-only mail source{" "}
+                    <a href={mailboxConnectUrl("gmail", "/agent")}>Connect</a>
+                  </span>
+                )}
               </div>
-              <button disabled={saving}>{saving ? "Saving…" : "Save mandate"}</button>
-            </form>
-          </div>
-        </section>
+              <form className={styles.policy} onSubmit={saveSettings}>
+                <label>
+                  <span>Monthly max cap</span>
+                  <div>
+                    <b>$</b>
+                    <input
+                      name="budget"
+                      defaultValue={data.settings.aiMonthlyBudget ?? ""}
+                      inputMode="decimal"
+                      placeholder="No cap"
+                    />
+                  </div>
+                </label>
+                <label>
+                  <span>Ask above</span>
+                  <div>
+                    <b>$</b>
+                    <input
+                      name="ceiling"
+                      defaultValue={data.settings.spendCeiling ?? ""}
+                      inputMode="decimal"
+                      placeholder="Always ask"
+                    />
+                  </div>
+                </label>
+                <div className={styles.policyState}>
+                  <ShieldCheck />
+                  <span>
+                    <strong>{readable(data.settings.approvalMode)}</strong>
+                    <small>
+                      {data.settings.killSwitch ? "Agent spend is stopped" : "Kill switch ready"}
+                    </small>
+                  </span>
+                </div>
+                <button disabled={saving}>{saving ? "Saving…" : "Save mandate"}</button>
+              </form>
+            </div>
+          </section>
+        </div>
       </section>
     </main>
   );
 }
 
-function PanelHeader({
-  icon,
-  label,
-  meta,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  meta: string;
-}) {
+function PanelHeader({ label, meta }: { label: string; meta: string }) {
   return (
     <header className={styles.panelHeader}>
-      <div>
-        {icon}
-        <h2>{label}</h2>
-      </div>
+      <h2>{label}</h2>
       <span>{meta}</span>
     </header>
   );
 }
 
 function EmptyPanel({
+  icon,
   title,
   body,
   action,
 }: {
+  icon: React.ReactNode;
   title: string;
   body: string;
   action?: React.ReactNode;
 }) {
   return (
     <div className={styles.emptyPanel}>
-      <i />
+      <span className={styles.emptyIcon}>{icon}</span>
       <strong>{title}</strong>
       <p>{body}</p>
       {action}

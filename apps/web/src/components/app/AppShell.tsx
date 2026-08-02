@@ -27,7 +27,7 @@ const NAV = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { user, summary, liveAction } = useRenewly();
+  const { user, summary, liveAction, error } = useRenewly();
 
   const agentState =
     liveAction?.state === "executing"
@@ -144,7 +144,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </header>
 
       {/* ── Content ─────────────────────────────────────────────────────── */}
-      <main className="min-w-0 flex-1 pb-20 lg:pb-0">{children}</main>
+      <main className="min-w-0 flex-1 pb-20 lg:pb-0">
+        {/*
+          An empty screen and an unreachable API look identical once the data is
+          gone, and the empty one reads as "you have nothing" — a claim about the
+          user's account that may be false. So a failed load says so, above
+          whatever the page managed to render.
+        */}
+        {error && (
+          <div
+            role="alert"
+            className="shell-x mx-auto w-full max-w-[1240px] pt-6"
+          >
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+              <p className="text-body-s font-medium">Some data could not be loaded</p>
+              <p className="mt-0.5 text-body-s text-ink-3">
+                {error} Figures on this page may be incomplete — they are not a
+                statement about your account.
+              </p>
+            </div>
+          </div>
+        )}
+        {children}
+      </main>
 
       {/* ── Mobile tab bar ──────────────────────────────────────────────── */}
       <nav
