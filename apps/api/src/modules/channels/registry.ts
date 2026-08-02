@@ -1,14 +1,12 @@
 import type { ChannelName } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { LinqChannelAdapter } from "./linq/adapter.js";
-import { SimulatorChannelAdapter } from "./simulator/adapter.js";
-import { WhatsAppChannelAdapter } from "./whatsapp/adapter.js";
 import type { ChannelAdapter } from "./types.js";
 
 /**
  * Adapters are constructed lazily and cached: a live adapter validates its keys
- * in the constructor, so building all three eagerly would make a workspace that
- * only uses the simulator fail to boot.
+ * in the constructor, so building both eagerly would make a workspace that uses
+ * only one of them fail to boot.
  */
 const cache = new Map<ChannelName, ChannelAdapter>();
 
@@ -16,13 +14,28 @@ export function getChannelAdapter(channel: ChannelName): ChannelAdapter {
   const cached = cache.get(channel);
   if (cached) return cached;
 
-  const adapter: ChannelAdapter =
-    channel === "simulator"
-      ? new SimulatorChannelAdapter()
-      : channel === "imessage"
-        ? new LinqChannelAdapter()
-        : new WhatsAppChannelAdapter();
+  // The simulator has no implementation outside the test doubles. A workspace
+  // still carrying it as its channel gets an error naming the problem, rather
+  // than an in-process thread that looks delivered and reached nobody.
+  if (channel === "simulator") {
+    throw new AppError(
+      "FEATURE_DISABLED",
+      "The simulator channel is a test instrument and is not available at runtime. " +
+        "Connect iMessage with real credentials to receive approvals.",
+      { channel },
+    );
+  }
 
+  // WhatsApp was removed. The enum value survives because existing rows still
+  // reference it and dropping a Postgres enum member means rewriting the type;
+  // nothing can send through it.
+  if (channel === "whatsapp") {
+    throw new AppError("FEATURE_DISABLED", "WhatsApp is no longer supported as a channel.", {
+      channel,
+    });
+  }
+
+  const adapter: ChannelAdapter = new LinqChannelAdapter();
   cache.set(channel, adapter);
   return adapter;
 }

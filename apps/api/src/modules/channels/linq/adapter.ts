@@ -2,6 +2,7 @@ import { env } from "../../../env.js";
 import { AppError } from "../../../lib/errors.js";
 import { verifyStandardWebhook } from "../../../lib/crypto.js";
 import { newId } from "../../../lib/id.js";
+import { logger } from "../../../lib/logger.js";
 import type {
   ChannelAdapter,
   InboundMessage,
@@ -22,10 +23,40 @@ import type {
  * `LINQ_MODE=live` is the switch.
  */
 
-/** `POST /chats` returns the chat; the message it sent is nested inside it. */
+/**
+ * `POST /chats` returns the chat; the message it sent is nested inside it.
+ *
+ * The id has been observed at the top level and wrapped under `chat` or `data`,
+ * so all three are read. Nothing here is required — see `send` for why a
+ * missing id must not fail the call.
+ */
 interface LinqChatResponse {
   id?: string;
+  chat_id?: string;
+  chat?: { id?: string; last_message?: { id?: string } };
+  data?: { id?: string; chat?: { id?: string }; last_message?: { id?: string } };
   last_message?: { id?: string; sent_at?: string };
+}
+
+/** Whichever shape the chat came back in. */
+function readChatId(payload: LinqChatResponse): string | null {
+  return (
+    payload.id ??
+    payload.chat?.id ??
+    payload.data?.id ??
+    payload.data?.chat?.id ??
+    payload.chat_id ??
+    null
+  );
+}
+
+function readMessageId(payload: LinqChatResponse): string | null {
+  return (
+    payload.last_message?.id ??
+    payload.chat?.last_message?.id ??
+    payload.data?.last_message?.id ??
+    null
+  );
 }
 
 /** `POST /chats/{chatId}/messages` returns the message itself. */
@@ -69,7 +100,7 @@ const DEFAULT_BASE_URL = "https://api.linqapp.com/api/partner/v3";
 
 export class LinqChannelAdapter implements ChannelAdapter {
   readonly channel = "imessage" as const;
-  readonly mode: "mock" | "live";
+  readonly mode: "live" | "disabled";
 
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
@@ -78,7 +109,7 @@ export class LinqChannelAdapter implements ChannelAdapter {
   private counter = 0;
 
   constructor(options?: {
-    mode?: "mock" | "live";
+    mode?: "live" | "disabled";
     baseUrl?: string;
     apiKey?: string;
     webhookSecret?: string;
@@ -86,7 +117,7 @@ export class LinqChannelAdapter implements ChannelAdapter {
   }) {
     this.mode = options?.mode ?? env.LINQ_MODE;
     this.baseUrl = normalizeBaseUrl(options?.baseUrl ?? env.LINQ_BASE_URL);
-    this.apiKey = options?.apiKey ?? env.LINQ_API_KEY;
+    this.apiKey = stripBearer(options?.apiKey ?? env.LINQ_API_KEY);
     this.webhookSecret = options?.webhookSecret ?? env.LINQ_WEBHOOK_SECRET;
     this.fromNumber = options?.fromNumber ?? env.LINQ_FROM_NUMBER;
 
@@ -116,7 +147,7 @@ export class LinqChannelAdapter implements ChannelAdapter {
   }
 
   private async send(to: string, body: string, threadId: string | undefined): Promise<SendResult> {
-    if (this.mode === "mock") {
+    if (this.mode === "disabled") {
       this.counter += 1;
       return {
         externalMessageId: `linq_mock_${Date.now().toString(36)}_${this.counter}`,
@@ -146,15 +177,25 @@ export class LinqChannelAdapter implements ChannelAdapter {
       message,
     });
 
-    if (!payload.id) {
-      throw new AppError("CHANNEL_SEND_FAILED", "Linq created no chat id", {
-        received: Object.keys(payload),
-      });
+    /*
+     * A 2xx here means Linq accepted the message and the recipient's phone has
+     * it. The chat id is bookkeeping on top of that, so failing the send when
+     * we cannot find one is precisely the wrong trade: the outbox retries, and
+     * the user's phone buzzes again for every retry. That is what produced five
+     * copies of every proposal. Warn, carry on, and fall back to a stable
+     * per-recipient thread id.
+     */
+    const chatId = readChatId(payload);
+    if (!chatId) {
+      logger.warn(
+        { to, received: Object.keys(payload) },
+        "linq accepted the message but returned no chat id — threading falls back to the recipient",
+      );
     }
 
     return {
-      externalMessageId: payload.last_message?.id ?? newId("msg"),
-      externalThreadId: payload.id,
+      externalMessageId: readMessageId(payload) ?? newId("msg"),
+      externalThreadId: chatId ?? `linq_thread_${to}`,
       delivered: true,
     };
   }
@@ -294,6 +335,19 @@ function parseDate(value: string | undefined): Date {
   if (!value) return new Date();
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+/**
+ * Accepts a key pasted with its scheme still attached.
+ *
+ * The header is built as `Bearer ${key}`, so a `LINQ_API_KEY=Bearer sk_…` sends
+ * `Bearer Bearer sk_…` and Linq answers "Invalid or expired token" — which
+ * reads as a bad key and sends you looking in the wrong place. Copying the
+ * whole `Authorization` value out of API docs is the normal way to make this
+ * mistake, so it is cheaper to absorb it than to explain it.
+ */
+function stripBearer(key: string | undefined): string | undefined {
+  return key?.replace(/^\s*bearer\s+/i, "").trim() || undefined;
 }
 
 /** Tolerates a bare host being configured, which is what the old default was. */

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { mailboxConnections } from "../src/db/schema.js";
 import { decryptSecret } from "../src/lib/crypto.js";
-import { resetMailboxClients } from "../src/modules/mailbox/mock.js";
+import { installMockMailbox } from "../src/test/doubles/mailbox.js";
 import {
   accessTokenFor,
   activeConnection,
@@ -32,7 +32,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  resetMailboxClients();
+  installMockMailbox();
 });
 
 afterAll(async () => {
@@ -49,7 +49,7 @@ interface ConnectionShape {
 
 /** Walks the consent redirect the way a browser would. */
 async function connect(
-  provider: "gmail" | "outlook",
+  provider: "gmail",
   address = `demo@${provider}.example.com`,
 ): Promise<ConnectionShape> {
   const start = await harness.app.request(
@@ -86,12 +86,6 @@ describe("mailbox consent", () => {
     expect(connection.status).toBe("active");
   });
 
-  it("connects Outlook alongside Gmail", async () => {
-    await connect("outlook", "founder@outlook.example.com");
-
-    const list = await client.get<{ connections: ConnectionShape[] }>("/v1/mailbox");
-    expect(list.body.connections.map((c) => c.provider).sort()).toContain("outlook");
-  });
 
   it("stores tokens encrypted, never in the clear", async () => {
     const connection = await connect("gmail", "sealed@gmail.example.com");

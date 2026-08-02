@@ -54,7 +54,7 @@ export interface VerifyInput {
 
 export interface ChannelAdapter {
   readonly channel: ChannelName;
-  readonly mode: "mock" | "live";
+  readonly mode: "live" | "disabled" | "simulator";
 
   sendText(input: SendTextInput): Promise<SendResult>;
   sendProposal(input: SendProposalInput): Promise<SendResult>;

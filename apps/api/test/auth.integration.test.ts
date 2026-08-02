@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient, createHarness, expectErrorCode, type TestHarness } from "../src/test/helpers.js";
 import { auditTypes, signUp } from "../src/test/factories.js";
+import { verificationCodeFor } from "../src/test/factories.js";
 
 let harness: TestHarness;
 let client: ApiClient;
@@ -23,7 +24,6 @@ describe("auth", () => {
       token: string;
       expiresAt: string;
       verificationRequired: boolean;
-      verificationCode: string | null;
     }>("/v1/auth/signup", {
       email: "Founder@Example.com",
       password: "Sup3rSecret!",
@@ -43,7 +43,11 @@ describe("auth", () => {
     expect(response.body.user.emailVerified).toBe(false);
 
     client.setToken(response.body.token);
-    verificationCode = response.body.verificationCode!;
+
+    // The code is never in the response — it is only ever in the mail. Reading
+    // it from the captured message is the same thing the user does.
+    expect(JSON.stringify(response.body)).not.toContain("verificationCode");
+    verificationCode = verificationCodeFor("founder@example.com");
     expect(verificationCode).toMatch(/^\d{6}$/);
   });
 
@@ -179,8 +183,12 @@ describe("health and meta", () => {
     const response = await client.get<Record<string, unknown>>("/v1/demo/status");
     expect(response.status).toBe(200);
     expect(response.body.llmConfigured).toBe(false);
-    expect(response.body.pravaMode).toBe("mock");
-    expect(response.body.pravaConfigured).toBe(true);
+    expect(response.body.pravaMode).toBe("disabled");
+    // Mode and credentials are now reported independently: a key may well be
+    // present in .env while the rail is switched off. `configured` used to be
+    // satisfied by a mock mode too, so a wholly fabricated deployment reported
+    // itself fully configured.
+    expect(typeof response.body.pravaConfigured).toBe("boolean");
     expect(JSON.stringify(response.body)).not.toMatch(/sk_|pk_/);
   });
 

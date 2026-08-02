@@ -8,6 +8,7 @@ export type ErrorCode =
   | "EMAIL_NOT_VERIFIED"
   | "NOT_FOUND"
   | "VALIDATION_ERROR"
+  | "FEATURE_DISABLED"
   | "KILL_SWITCH_ENABLED"
   | "CONFIRMATION_REQUIRED"
   | "APPROVAL_REQUIRED"
@@ -34,6 +35,10 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   EMAIL_NOT_VERIFIED: 403,
   NOT_FOUND: 404,
   VALIDATION_ERROR: 400,
+  // 503, not 500: the integration is switched off by configuration, not broken.
+  // The request was fine and retrying it unchanged will keep failing until
+  // somebody supplies a credential, which is what this status says.
+  FEATURE_DISABLED: 503,
   KILL_SWITCH_ENABLED: 409,
   CONFIRMATION_REQUIRED: 409,
   APPROVAL_REQUIRED: 409,

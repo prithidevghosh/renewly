@@ -17,7 +17,7 @@ import type { AuthContext } from "../../types/context.js";
 import { recordAudit } from "../audit/service.js";
 import { decisionPackageSchema } from "../decisions/engine.js";
 import { resolveMerchant } from "../merchants/service.js";
-import { getCheckoutAdapter, MockCheckoutAdapter } from "./checkoutAdapter.js";
+import { getCheckoutAdapter } from "./checkoutAdapter.js";
 import { getPravaClient } from "./factory.js";
 import { assertPayAllowed } from "./policyGuard.js";
 import { brandFromPan, last4, type OneTimeCredentials } from "./pravaClient.js";
@@ -366,8 +366,13 @@ export async function completePayment(
     db,
   );
 
-  const adapter =
-    input.forceDecline && isTest() ? new MockCheckoutAdapter({ forceDecline: true }) : getCheckoutAdapter();
+  /*
+   * `forceDecline` used to construct a mock adapter right here, which put an
+   * import of a test double into the module that charges cards. The decline
+   * path is exercised by installing an adapter through setCheckoutAdapter
+   * instead, so this module only ever talks to whatever the factory returns.
+   */
+  const adapter = getCheckoutAdapter();
 
   const outcome = await adapter.charge(credentials, {
     reference: session.id,

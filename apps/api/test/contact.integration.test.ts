@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { env } from "../src/env.js";
 import { setMailTransport } from "../src/lib/mailer.js";
 import { ApiClient, createHarness, expectErrorCode, type TestHarness } from "../src/test/helpers.js";
+import { captureTransport } from "../src/test/doubles/mailer.js";
 
 let harness: TestHarness;
 let client: ApiClient;
@@ -23,8 +24,8 @@ afterAll(async () => {
 });
 
 describe("contact", () => {
-  it("runs against the mock mailer, never a real provider", () => {
-    expect(env.MAIL_OUTBOUND_MODE).toBe("mock");
+  it("runs against a capture transport, never a real provider", () => {
+    expect(env.MAIL_OUTBOUND_MODE).toBe("disabled");
     expect(env.MAIL_OUTBOUND_API_KEY).toBeUndefined();
   });
 
@@ -111,7 +112,7 @@ describe("contact", () => {
       expect(response.status).toBe(502);
       expect(expectErrorCode(response.body)).toBe("CHANNEL_SEND_FAILED");
     } finally {
-      setMailTransport(null);
+      setMailTransport(captureTransport());
     }
   });
 

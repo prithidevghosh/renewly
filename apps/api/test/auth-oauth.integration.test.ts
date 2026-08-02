@@ -2,15 +2,20 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { authIdentities, emailVerificationCodes, users } from "../src/db/schema.js";
 import { decryptSecret } from "../src/lib/crypto.js";
-import { resetOAuthClients } from "../src/modules/auth/oauth/providers.js";
+import { installMockOAuth } from "../src/test/doubles/oauth.js";
+import {
+  installGoogleIdTokenSigner,
+  type GoogleIdTokenSigner,
+} from "../src/test/doubles/googleIdToken.js";
 import { signUpUnverified } from "../src/test/factories.js";
 import { ApiClient, createHarness, expectErrorCode, type TestHarness } from "../src/test/helpers.js";
 
 /**
  * Sign-in through Google and Microsoft, email verification, and the rules that
  * decide when a provider identity may be attached to an account that already
- * exists. Runs entirely on the mock OAuth client, which drives the same code
- * path as the live one — only the network call differs.
+ * exists. Runs on the OAuth double from src/test/doubles, injected by the
+ * harness, which drives the same code path as the live client — only the
+ * network call differs.
  */
 
 let harness: TestHarness;
@@ -20,7 +25,10 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  resetOAuthClients();
+  // Re-install rather than clear. Clearing used to be enough because
+  // OAUTH_MODE=mock rebuilt the double on demand; there is no such mode now, so
+  // a cleared registry means social sign-in is simply off.
+  installMockOAuth();
 });
 
 afterAll(async () => {
@@ -113,25 +121,6 @@ describe("oauth sign-in", () => {
     expect(decryptSecret(identity!.refreshToken!)).toContain("mock-refresh");
   });
 
-  it("keeps Google and Microsoft as separate identities on one account", async () => {
-    await signInWith("google", "g-sub-both", "both@example.com");
-    const { client } = await signInWith("microsoft", "ms-sub-both", "both@example.com");
-
-    const me = await client.get<{ user: { email: string } }>("/v1/me");
-    expect(me.body.user.email).toBe("both@example.com");
-
-    const rows = await harness.handle.db
-      .select()
-      .from(users)
-      .where(eq(users.email, "both@example.com"));
-    expect(rows).toHaveLength(1);
-
-    const identities = await harness.handle.db
-      .select()
-      .from(authIdentities)
-      .where(eq(authIdentities.userId, rows[0]!.id));
-    expect(identities.map((i) => i.provider).sort()).toEqual(["google", "microsoft"]);
-  });
 
   it("refuses an unknown provider", async () => {
     const response = await harness.app.request("http://localhost/v1/auth/oauth/facebook/start", {
@@ -227,8 +216,8 @@ describe("account linking", () => {
     expect((await client.get("/v1/subscriptions")).status).toBe(403);
 
     const { client: oauthClient } = await signInWith(
-      "microsoft",
-      "ms-link-sub",
+      "google",
+      "g-link-sub",
       "unverified-link@example.com",
     );
 
@@ -386,6 +375,24 @@ describe("the verification gate", () => {
 });
 
 describe("google one-tap (ID token)", () => {
+  /*
+   * These tokens are really signed and really verified. The signer installs a
+   * local key set and mints genuine RS256 JWTs, so jwtVerify checks signature,
+   * issuer, audience and expiry exactly as it does against Google. The previous
+   * version of these tests posted the literal string
+   * `mock:<sub>:<email>` into a branch that skipped verification entirely —
+   * which meant the code path in front of real users was never tested here.
+   */
+  let signer: GoogleIdTokenSigner;
+
+  beforeAll(async () => {
+    signer = await installGoogleIdTokenSigner();
+  });
+
+  afterAll(() => {
+    signer.restore();
+  });
+
   it("exposes what the login screen needs, without any secret", async () => {
     const client = new ApiClient(harness.app);
     const response = await client.get<{
@@ -407,7 +414,9 @@ describe("google one-tap (ID token)", () => {
     const response = await client.post<{
       token: string;
       user: { email: string; emailVerified: boolean };
-    }>("/v1/auth/google/id-token", { credential: "mock:onetap-sub:onetap@example.com" });
+    }>("/v1/auth/google/id-token", {
+      credential: await signer.sign({ sub: "onetap-sub", email: "onetap@example.com" }),
+    });
 
     expect(response.status).toBe(200);
     expect(response.body.user.email).toBe("onetap@example.com");
@@ -420,7 +429,10 @@ describe("google one-tap (ID token)", () => {
   it("stores no access token, because One Tap issues none", async () => {
     const client = new ApiClient(harness.app);
     await client.post("/v1/auth/google/id-token", {
-      credential: "mock:onetap-notokens:notokens@example.com",
+      credential: await signer.sign({
+        sub: "onetap-notokens",
+        email: "notokens@example.com",
+      }),
     });
 
     const [identity] = await harness.handle.db
@@ -439,7 +451,7 @@ describe("google one-tap (ID token)", () => {
 
     const client = new ApiClient(harness.app);
     const response = await client.post<{ token: string }>("/v1/auth/google/id-token", {
-      credential: "mock:shared-sub:shared@example.com",
+      credential: await signer.sign({ sub: "shared-sub", email: "shared@example.com" }),
     });
     client.setToken(response.body.token);
     const me2 = await client.get<{ user: { id: string } }>("/v1/me");
@@ -452,6 +464,30 @@ describe("google one-tap (ID token)", () => {
     const client = new ApiClient(harness.app);
     const response = await client.post("/v1/auth/google/id-token", {
       credential: "not-a-real-token",
+    });
+    expect(response.status).toBe(401);
+  });
+
+  it("rejects a token minted for another site", async () => {
+    const client = new ApiClient(harness.app);
+    const response = await client.post("/v1/auth/google/id-token", {
+      credential: await signer.sign({
+        sub: "replay-sub",
+        email: "replay@example.com",
+        audience: "some-other-client-id.apps.googleusercontent.com",
+      }),
+    });
+    expect(response.status).toBe(401);
+  });
+
+  it("rejects an expired token", async () => {
+    const client = new ApiClient(harness.app);
+    const response = await client.post("/v1/auth/google/id-token", {
+      credential: await signer.sign({
+        sub: "expired-sub",
+        email: "expired@example.com",
+        expiresIn: "-1m",
+      }),
     });
     expect(response.status).toBe(401);
   });

@@ -1,7 +1,14 @@
 import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
 
-loadDotenv();
+/**
+ * DOTENV_CONFIG_PATH is dotenv's own convention, but it is only read by its
+ * preload entry point — calling `config()` directly ignores it. Honouring it
+ * here is what lets a test boot this module in isolation from whatever .env the
+ * developer happens to have; without it the suite silently reads their file and
+ * asserts against a configuration it did not choose.
+ */
+loadDotenv(process.env.DOTENV_CONFIG_PATH ? { path: process.env.DOTENV_CONFIG_PATH } : undefined);
 
 const csv = (value: string): string[] =>
   value
@@ -10,7 +17,7 @@ const csv = (value: string): string[] =>
     .filter(Boolean);
 
 /**
- * A key left blank in `.env` — `MOCK_PRAVA_FAIL=` — reaches us as "" rather
+ * A key left blank in `.env` — `LINQ_API_KEY=` — reaches us as "" rather
  * than undefined. That is a template placeholder, not a value, so it means
  * unset. Without this a blank line in the shipped `.env.example` fails boot on
  * every schema stricter than a plain string.
@@ -32,39 +39,39 @@ const envSchema = z.object({
   AUTH_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(60 * 60 * 24 * 7),
 
   /**
-   * Social sign-in. `mock` mints a deterministic profile from the state so the
-   * whole flow — including account linking — runs in tests and demos with no
-   * Google or Microsoft credentials.
+   * Every integration is `live` or `disabled`. There is no third mode.
+   *
+   * A mock adapter answers in the shape of the real thing while nothing behind
+   * it is true: fixture mail presented as the user's inbox, a payment that
+   * settles nothing, a message delivered to no one. Because it succeeds, there
+   * is no failure anywhere to notice, and the fake reaches the screen wearing
+   * the same clothes as the fact. So the code no longer contains one.
+   *
+   * `disabled` is the honest answer when a credential is missing: the feature
+   * switches off, the UI says it is unavailable, and any call to it raises
+   * FEATURE_DISABLED. Switched off is a state a user can understand and act on.
+   * Pretending is not.
    */
-  /**
-   * Deliberate escape hatch for a demo deployment. Permits mock payments and
-   * messaging in production; never permits mock auth or a mock mailbox.
-   */
-  ALLOW_MOCK_INTEGRATIONS: z
-    .enum(["true", "false"])
-    .default("false")
-    .transform((v) => v === "true"),
-
-  /**
-   * `disabled` is a first-class answer: the social buttons disappear and the
-   * routes say so. A feature that is switched off is honest; a feature that
-   * pretends to work is not, which is why production may choose real or off
-   * but never mock.
-   */
-  OAUTH_MODE: z.enum(["mock", "live", "disabled"]).default("mock"),
+  /** Google is the only social sign-in provider; Microsoft has been removed. */
+  OAUTH_MODE: z.enum(["live", "disabled"]).default("disabled"),
   GOOGLE_CLIENT_ID: optional(z.string()),
   GOOGLE_CLIENT_SECRET: optional(z.string()),
+
+  /**
+   * Microsoft credentials remain solely for reading an Outlook mailbox, which
+   * is a different capability from signing in. Nothing authenticates with them.
+   */
   MICROSOFT_CLIENT_ID: optional(z.string()),
   MICROSOFT_CLIENT_SECRET: optional(z.string()),
   /** `common` accepts both work and personal Microsoft accounts. */
   MICROSOFT_TENANT: z.string().default("common"),
 
   /**
-   * Mailbox read access. Separate from OAUTH_MODE so login can be live while
-   * the inbox stays mocked — Gmail's read scope is restricted and needs
-   * Google's review, which arrives long after sign-in works.
+   * Mailbox read access. Separate from OAUTH_MODE so sign-in can be live while
+   * the inbox is off — Gmail's read scope is restricted and needs Google's
+   * review, which arrives long after sign-in works.
    */
-  MAILBOX_MODE: z.enum(["mock", "live", "disabled"]).default("mock"),
+  MAILBOX_MODE: z.enum(["live", "disabled"]).default("disabled"),
 
   /** Six-digit code lifetime, and how many guesses it survives. */
   VERIFICATION_CODE_TTL_MINUTES: z.coerce.number().int().positive().default(15),
@@ -76,7 +83,7 @@ const envSchema = z.object({
   LLM_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
   LLM_MODEL: z.string().default("gpt-4o-mini"),
 
-  PRAVA_MODE: z.enum(["mock", "sandbox", "live"]).default("mock"),
+  PRAVA_MODE: z.enum(["sandbox", "live", "disabled"]).default("disabled"),
   PRAVA_SECRET_KEY: optional(z.string()),
   PRAVA_PUBLISHABLE_KEY: optional(z.string()),
   PRAVA_API_BASE: z.string().url().default("https://sandbox.api.prava.space"),
@@ -96,33 +103,19 @@ const envSchema = z.object({
     .default("US")
     .transform((value) => value.toUpperCase()),
 
-  MOCK_PRAVA_FAIL: optional(z.enum(["mandate", "card", "decline"])),
-  MOCK_PRAVA_RESULT: optional(z.enum(["success", "decline", "pending", "mandate_fail"])),
-
-  LINQ_MODE: z.enum(["mock", "live"]).default("mock"),
+  LINQ_MODE: z.enum(["live", "disabled"]).default("disabled"),
   LINQ_API_KEY: optional(z.string()),
   LINQ_WEBHOOK_SECRET: optional(z.string()),
   LINQ_BASE_URL: z.string().url().default("https://api.linqapp.com/api/partner/v3"),
   /** A line provisioned on the Linq account; required to start a chat. */
   LINQ_FROM_NUMBER: optional(z.string()),
 
-  WHATSAPP_MODE: z.enum(["mock", "live"]).default("mock"),
-  WHATSAPP_TOKEN: optional(z.string()),
-  WHATSAPP_PHONE_NUMBER_ID: optional(z.string()),
-  WHATSAPP_VERIFY_TOKEN: optional(z.string()),
-  WHATSAPP_APP_SECRET: optional(z.string()),
-  /** Graph versions are supported for about two years from release. */
-  WHATSAPP_GRAPH_VERSION: z
-    .string()
-    .regex(/^v\d+\.\d+$/, "must look like v25.0")
-    .default("v25.0"),
-
-  MAIL_MODE: z.enum(["mock", "live"]).default("mock"),
+  MAIL_MODE: z.enum(["live", "disabled"]).default("disabled"),
   MAIL_WEBHOOK_SECRET: optional(z.string()),
   MAIL_INBOUND_DOMAIN: z.string().default("inbound.renewly.app"),
 
   /** Outbound mail, sent through Resend. Separate from MAIL_MODE, which is inbound. */
-  MAIL_OUTBOUND_MODE: z.enum(["mock", "live"]).default("mock"),
+  MAIL_OUTBOUND_MODE: z.enum(["live", "disabled"]).default("disabled"),
   MAIL_OUTBOUND_API_KEY: optional(z.string()),
   /** RFC 5322 sender. The domain must be verified with the provider. */
   MAIL_FROM: z.string().min(3).default("Renewly <hello@renewly.app>"),
@@ -138,23 +131,26 @@ const envSchema = z.object({
     .transform((v) => v === "true"),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(2000),
   APPROVAL_TTL_MINUTES: z.coerce.number().int().positive().default(60),
+  /** A renewal due within this many days is close enough to propose on. */
+  RENEWAL_HORIZON_DAYS: z.coerce.number().int().positive().default(7),
+  /** The proposal sweep runs the decision engine, so it paces itself far
+   *  slower than the worker tick it rides on. */
+  SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(300_000),
+  /**
+   * How long to leave a renewal alone after a proposal for it ended without an
+   * answer — expired, or the send failed. Without a floor the sweep would put
+   * the same proposal back in front of someone every five minutes; without any
+   * retry at all a proposal lost to a channel outage is lost for good.
+   */
+  PROPOSAL_RETRY_COOLDOWN_MINUTES: z.coerce.number().int().nonnegative().default(60),
 
-  CHECKOUT_ADAPTER_MODE: z.enum(["mock", "http"]).default("mock"),
+  CHECKOUT_ADAPTER_MODE: z.enum(["http", "disabled"]).default("disabled"),
   CHECKOUT_ADAPTER_URL: optional(z.string().url()),
   CHECKOUT_ADAPTER_SECRET: optional(z.string()),
 
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(1_048_576),
   MAX_CSV_ROWS: z.coerce.number().int().positive().default(5000),
 
-  SEED_SAMPLE_SUBS: z
-    .enum(["true", "false"])
-    .default("false")
-    .transform((v) => v === "true"),
-  /** Leaves the demo account with an open approval in the simulator thread. */
-  SEED_DEMO_FLOW: z
-    .enum(["true", "false"])
-    .default("false")
-    .transform((v) => v === "true"),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -171,83 +167,49 @@ function parseEnv(): Env {
     if (value.AUTH_SECRET.startsWith("renewly-development-secret")) {
       throw new Error("AUTH_SECRET must be set to a real secret in production");
     }
-    if (value.PRAVA_MODE !== "mock" && !value.PRAVA_SECRET_KEY) {
+    if (value.PRAVA_MODE !== "disabled" && !value.PRAVA_SECRET_KEY) {
       throw new Error("PRAVA_SECRET_KEY is required when PRAVA_MODE is sandbox or live");
     }
+  }
 
-    /*
-     * No fake anything in production.
-     *
-     * Every adapter defaults to `mock` so the suite and a laptop need no keys.
-     * That default is right for a test and catastrophic in production, where it
-     * silently turns real requests into theatre. It is not hypothetical: with
-     * OAUTH_MODE unset, POST to the Google callback with
-     * `code=mock:x:ceo@yourdomain.com` returned a valid session for that
-     * address — no password, no Google, no consent.
-     *
-     * So mock in production is a boot failure, not a warning. A service that
-     * refuses to start is a bad afternoon; a service that quietly authenticates
-     * anyone, or shows one customer another's data, is unrecoverable.
-     */
-    const identityMocks: string[] = [];
-    if (value.OAUTH_MODE === "mock") identityMocks.push("OAUTH_MODE");
-    if (value.MAILBOX_MODE === "mock") identityMocks.push("MAILBOX_MODE");
-    if (identityMocks.length > 0) {
-      throw new Error(
-        `${identityMocks.join(" and ")} cannot be "mock" in production. ` +
-          "Mock auth accepts any identity without a password, and a mock mailbox " +
-          "serves fixture data as if it were the user's own mail. There is no " +
-          "opt-out for these two — set them to \"live\" and configure the provider, " +
-          "or \"disabled\" to turn the feature off honestly.",
-      );
+  /*
+   * There is no mock adapter left to refuse, in any environment.
+   *
+   * This guard used to list the modes production could not be started with,
+   * because every adapter defaulted to `mock` and the default was catastrophic
+   * once deployed. It was not hypothetical: with OAUTH_MODE unset, POSTing to
+   * the Google callback with `code=mock:x:ceo@yourdomain.com` returned a valid
+   * session for that address — no password, no Google, no consent.
+   *
+   * The fix is no longer a guard around a dangerous default; the dangerous
+   * thing is gone. `mock` is not a value any mode accepts, so an old .env
+   * carrying one fails schema parsing above with the list of legal values.
+   * What remains below is the check that a mode claiming to be live actually
+   * has the credentials to be live — a half-configured provider is a 500 on a
+   * button the user can already see.
+   */
+  if (value.OAUTH_MODE === "live") {
+    // A half-configured provider is a runtime 500 on a button the user can
+    // already see, so it fails here instead.
+    if (Boolean(value.GOOGLE_CLIENT_ID) !== Boolean(value.GOOGLE_CLIENT_SECRET)) {
+      throw new Error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set together");
     }
-
-    const integrationMocks: string[] = [];
-    if (value.PRAVA_MODE === "mock") integrationMocks.push("PRAVA_MODE");
-    if (value.CHECKOUT_ADAPTER_MODE === "mock") integrationMocks.push("CHECKOUT_ADAPTER_MODE");
-    if (value.LINQ_MODE === "mock") integrationMocks.push("LINQ_MODE");
-    if (value.WHATSAPP_MODE === "mock") integrationMocks.push("WHATSAPP_MODE");
-    if (value.MAIL_MODE === "mock") integrationMocks.push("MAIL_MODE");
-    if (value.MAIL_OUTBOUND_MODE === "mock") integrationMocks.push("MAIL_OUTBOUND_MODE");
-
-    // These fake money and messaging rather than identity, so a demo deployment
-    // may keep them — but only by saying so out loud, and it is logged on every
-    // boot. What is forbidden is arriving here by default and not knowing.
-    if (integrationMocks.length > 0 && !value.ALLOW_MOCK_INTEGRATIONS) {
+    if (!value.GOOGLE_CLIENT_ID) {
       throw new Error(
-        `${integrationMocks.join(", ")} ${integrationMocks.length === 1 ? "is" : "are"} ` +
-          `"mock" in production, so nothing real happens: payments are fake, ` +
-          "messages are never delivered. Configure the real credentials, or set " +
-          "ALLOW_MOCK_INTEGRATIONS=true to run a deliberate demo deployment.",
+        'OAUTH_MODE=live needs GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET. Use "disabled" ' +
+          "to turn social sign-in off; password sign-in is unaffected.",
       );
     }
   }
-  if (value.OAUTH_MODE === "live") {
-    // Either provider may be configured alone, but a half-configured one is a
-    // runtime 500 on a button the user can already see.
-    const google = Boolean(value.GOOGLE_CLIENT_ID) === Boolean(value.GOOGLE_CLIENT_SECRET);
-    const microsoft = Boolean(value.MICROSOFT_CLIENT_ID) === Boolean(value.MICROSOFT_CLIENT_SECRET);
-    if (!google) throw new Error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set together");
-    if (!microsoft) {
-      throw new Error("MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET must be set together");
-    }
-    if (!value.GOOGLE_CLIENT_ID && !value.MICROSOFT_CLIENT_ID) {
-      throw new Error("OAUTH_MODE=live needs at least one provider configured");
-    }
+  // Outlook mail is read with these; they authenticate nobody.
+  if (Boolean(value.MICROSOFT_CLIENT_ID) !== Boolean(value.MICROSOFT_CLIENT_SECRET)) {
+    throw new Error("MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET must be set together");
   }
   if (value.LINQ_MODE === "live" && !value.LINQ_API_KEY) {
     throw new Error("LINQ_API_KEY is required when LINQ_MODE is live");
   }
   if (value.LINQ_MODE === "live" && !value.LINQ_FROM_NUMBER) {
     throw new Error("LINQ_FROM_NUMBER is required when LINQ_MODE is live");
-  }
-  if (
-    value.WHATSAPP_MODE === "live" &&
-    (!value.WHATSAPP_TOKEN || !value.WHATSAPP_PHONE_NUMBER_ID)
-  ) {
-    throw new Error(
-      "WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID are required when WHATSAPP_MODE is live",
-    );
   }
   if (value.MAIL_MODE === "live" && !value.MAIL_WEBHOOK_SECRET) {
     throw new Error("MAIL_WEBHOOK_SECRET is required when MAIL_MODE is live");
@@ -257,6 +219,13 @@ function parseEnv(): Env {
   }
   if (value.CHECKOUT_ADAPTER_MODE === "http" && !value.CHECKOUT_ADAPTER_URL) {
     throw new Error("CHECKOUT_ADAPTER_URL is required when CHECKOUT_ADAPTER_MODE is http");
+  }
+  // Checked in every environment, not just production: a payment rail that is
+  // switched on without a key has no in-process fallback to quietly land on any
+  // more, so the failure would otherwise arrive at the first charge instead of
+  // at boot.
+  if (value.PRAVA_MODE !== "disabled" && !value.PRAVA_SECRET_KEY) {
+    throw new Error(`PRAVA_SECRET_KEY is required when PRAVA_MODE is ${value.PRAVA_MODE}`);
   }
 
   return value;

@@ -24,7 +24,14 @@ import {
 } from "../conversations/service.js";
 import { getChannelAdapter } from "./registry.js";
 
-const channelName = z.enum(["imessage", "whatsapp", "simulator"]);
+/**
+ * WhatsApp is removed. The simulator stays nameable because the registry is the
+ * authority on what can actually send: it refuses the simulator at runtime and
+ * serves it only when a test has installed the double. Rejecting the name here
+ * as well would report a validation problem for what is really an availability
+ * one, and would say it before the request reached the component that knows.
+ */
+const channelName = z.enum(["imessage", "simulator"]);
 
 /* -------------------------------------------------------------------------- */
 /* Authenticated channel management                                           */
@@ -167,24 +174,7 @@ function serializeMessage(row: typeof conversationMessages.$inferSelect) {
 
 export const channelWebhookRoutes = new Hono<AppEnv>();
 
-/**
- * Meta's subscription handshake. Answered before any signature check because
- * there is no body to sign.
- */
-channelWebhookRoutes.get("/whatsapp", async (c) => {
-  const { env } = await import("../../env.js");
-  const mode = c.req.query("hub.mode");
-  const token = c.req.query("hub.verify_token");
-  const challenge = c.req.query("hub.challenge");
-
-  if (mode === "subscribe" && token && token === env.WHATSAPP_VERIFY_TOKEN) {
-    return c.text(challenge ?? "");
-  }
-  throw new AppError("WEBHOOK_INVALID_SIGNATURE", "WhatsApp verification failed");
-});
-
 channelWebhookRoutes.post("/linq", (c) => handleChannelWebhook(c, "imessage"));
-channelWebhookRoutes.post("/whatsapp", (c) => handleChannelWebhook(c, "whatsapp"));
 channelWebhookRoutes.post("/simulator", (c) => handleChannelWebhook(c, "simulator"));
 
 async function handleChannelWebhook(c: Context<AppEnv>, channel: ChannelName) {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AppError } from "../../lib/errors.js";
-import { brandFromPan, last4, type CreateSessionInput } from "./pravaClient.js";
-import { MockPravaClient } from "./pravaMock.js";
+import { brandFromPan, last4, type CreateSessionInput } from "../../modules/payments/pravaClient.js";
+import { MockPravaClient } from "./prava.js";
 
 const sessionInput: CreateSessionInput = {
   userId: "usr_1",

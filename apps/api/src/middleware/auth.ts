@@ -34,6 +34,15 @@ export const requireAuth =
     }
 
     c.set("auth", auth);
-    c.set("log", c.get("log").child({ userId: auth.user.id, workspaceId: auth.workspace.id }));
+    // The email is here so a log line names a person rather than a ULID; the
+    // ids stay for grepping and for joins against the database.
+    c.set(
+      "log",
+      c.get("log").child({
+        userId: auth.user.id,
+        userEmail: auth.user.email,
+        workspaceId: auth.workspace.id,
+      }),
+    );
     await next();
   };

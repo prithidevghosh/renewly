@@ -17,7 +17,7 @@ import { sendEmail } from "../../lib/mailer.js";
  */
 
 export interface IssuedCode {
-  /** Present only in mock mail mode, for tests and local development. */
+  /** Always null: the code goes to the inbox or nowhere. */
   code: string | null;
   expiresAt: Date;
 }
@@ -59,10 +59,12 @@ export async function issueVerificationCode(
     "verification code issued",
   );
 
-  // Returning the code in mock mode is what lets the test suite and a local
-  // developer complete a signup without a mail provider. In live mode it is
-  // null, so it can never leak through an API response.
-  return { code: env.MAIL_OUTBOUND_MODE === "mock" ? code : null, expiresAt };
+  // Never returned to the caller. This used to hand the code back whenever
+  // outbound mail was mocked, which is how a local signup was completed without
+  // a mail provider — and also how anyone who could reach the signup endpoint in
+  // that configuration could verify an address they do not control. The code
+  // goes to the inbox or nowhere; tests read it from the transport they install.
+  return { code: null, expiresAt };
 }
 
 export interface VerifyResult {

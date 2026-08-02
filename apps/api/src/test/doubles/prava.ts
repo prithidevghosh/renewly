@@ -1,5 +1,4 @@
 import { AppError } from "../../lib/errors.js";
-import { env } from "../../env.js";
 import type {
   CreateSessionInput,
   CreateSessionResult,
@@ -7,17 +6,25 @@ import type {
   PravaClient,
   ReportStatusInput,
   ReportStatusResult,
-} from "./pravaClient.js";
+} from "../../modules/payments/pravaClient.js";
+import { assertTestOnly } from "./guard.js";
 
 /**
- * In-process stand-in for the Prava rail. It follows the same state machine as
- * the real service — created, awaiting_result with credentials, completed after
- * report-status — so the code path under test is the production one.
+ * In-process stand-in for the Prava rail, for tests only.
  *
- * MOCK_PRAVA_FAIL injects a failure:
+ * It follows the same state machine as the real service — created,
+ * awaiting_result with credentials, completed after report-status — so the code
+ * path under test is the production one.
+ *
+ * `failureMode` injects a failure:
  *   mandate — session creation is rejected as out of policy
  *   card    — the collection step never yields credentials
  *   decline — credentials are issued for a PAN the checkout adapter declines
+ *
+ * This used to be reachable from a running app through PRAVA_MODE=mock and the
+ * MOCK_PRAVA_FAIL environment variable. Both are gone: a test that wants a
+ * failure passes it in as an argument, which is visible at the call site
+ * instead of in the deployment's environment.
  */
 export type MockFailureMode = "mandate" | "card" | "decline";
 
@@ -53,10 +60,12 @@ export class MockPravaClient implements PravaClient {
       failureMode?: MockFailureMode | undefined;
       pollsBeforeCredentials?: number;
     } = {},
-  ) {}
+  ) {
+    assertTestOnly("MockPravaClient");
+  }
 
   private get failureMode(): MockFailureMode | undefined {
-    return this.options.failureMode ?? env.MOCK_PRAVA_FAIL;
+    return this.options.failureMode;
   }
 
   async createSession(input: CreateSessionInput): Promise<CreateSessionResult> {

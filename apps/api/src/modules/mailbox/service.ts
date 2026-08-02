@@ -10,7 +10,7 @@ import { AppError, notFound } from "../../lib/errors.js";
 import { newId } from "../../lib/id.js";
 import { logger } from "../../lib/logger.js";
 import { recordAudit } from "../audit/service.js";
-import { getMailboxClient } from "./mock.js";
+import { getMailboxClient } from "./registry.js";
 import { RECEIPT_KEYWORDS, type MailMessage, type MailboxGrant } from "./types.js";
 
 /**
@@ -177,7 +177,13 @@ async function markError(id: string, reason: string, db: Database): Promise<void
 
 export interface FetchReceiptsInput {
   connection: MailboxConnection;
-  /** How far back to look. The first sweep uses three months. */
+  /**
+   * How far back to look, in days. Takes precedence over `monthsBack` — a
+   * window the user picked is expressed in days because the shortest one
+   * offered (a fortnight) is not a whole number of months.
+   */
+  sinceDays?: number;
+  /** Month-granularity window, kept for callers that think in months. */
   monthsBack?: number;
   limit?: number;
   now?: Date;
@@ -189,7 +195,11 @@ export async function fetchReceipts(input: FetchReceiptsInput): Promise<MailMess
   const db = input.db ?? getDb();
   const now = input.now ?? new Date();
   const since = new Date(now);
-  since.setUTCMonth(since.getUTCMonth() - (input.monthsBack ?? 3));
+  if (input.sinceDays !== undefined) {
+    since.setUTCDate(since.getUTCDate() - input.sinceDays);
+  } else {
+    since.setUTCMonth(since.getUTCMonth() - (input.monthsBack ?? 3));
+  }
 
   const accessToken = await accessTokenFor(input.connection, db);
   const client = await getMailboxClient(input.connection.provider);

@@ -1,10 +1,12 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { createDecision, createSubscription, signUp } from "../src/test/factories.js";
 import { ApiClient, createHarness, expectErrorCode, type TestHarness } from "../src/test/helpers.js";
 import { transactions } from "../src/db/schema.js";
-import { MockPravaClient } from "../src/modules/payments/pravaMock.js";
+import { MockPravaClient } from "../src/test/doubles/prava.js";
 import { setPravaClient } from "../src/modules/payments/factory.js";
+import { setCheckoutAdapter } from "../src/modules/payments/checkoutAdapter.js";
+import { MockCheckoutAdapter } from "../src/test/doubles/checkout.js";
 
 let harness: TestHarness;
 let client: ApiClient;
@@ -310,13 +312,27 @@ describe("pay is blocked by policy", () => {
 });
 
 describe("pay failure paths", () => {
+  /*
+   * A decline is produced by installing an adapter that declines, not by a
+   * `forceDecline` flag on the request. The flag reached into the payment
+   * service and built a mock there, which meant the module that charges cards
+   * imported a test double; the seam is setCheckoutAdapter instead.
+   */
+  /** Installs a declining adapter for one test and restores it afterwards. */
+  function decliningCheckout() {
+    setCheckoutAdapter(new MockCheckoutAdapter({ forceDecline: true }));
+  }
+
+  afterEach(() => {
+    setCheckoutAdapter(new MockCheckoutAdapter());
+  });
+
   it("a declined checkout writes a declined transaction and no receipt", async () => {
     const { decision } = await payableRenewal({ merchantName: "Decline Test Co" });
     await client.post(`/v1/decisions/${decision.id}/pay/session`);
+    decliningCheckout();
 
-    const response = await client.post(`/v1/decisions/${decision.id}/pay/complete`, {
-      forceDecline: true,
-    });
+    const response = await client.post(`/v1/decisions/${decision.id}/pay/complete`, {});
 
     expect(response.status).toBe(402);
     expect(expectErrorCode(response.body)).toBe("CHECKOUT_DECLINED");
@@ -339,7 +355,8 @@ describe("pay failure paths", () => {
   it("reports DECLINED back to the rail so the credential is closed out", async () => {
     const { decision } = await payableRenewal({ merchantName: "Decline Report Co" });
     const session = await client.post<SessionResponse>(`/v1/decisions/${decision.id}/pay/session`);
-    await client.post(`/v1/decisions/${decision.id}/pay/complete`, { forceDecline: true });
+    decliningCheckout();
+    await client.post(`/v1/decisions/${decision.id}/pay/complete`, {});
 
     expect(harness.prava.inspect(session.body.paymentSession.pravaSessionId)?.reported).toBe(
       "DECLINED",

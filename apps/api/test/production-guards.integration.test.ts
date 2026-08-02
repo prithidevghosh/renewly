@@ -4,13 +4,19 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
- * Production must never run on fakes.
+ * Nothing may run on fakes, in any environment.
  *
- * Every adapter defaults to `mock` so the suite and a laptop need no keys. That
- * default is correct for a test and catastrophic in production, where it turns
- * real requests into theatre. It was not hypothetical: with OAUTH_MODE unset, a
- * GET to the Google callback carrying `code=mock:x:ceo@company.com` returned a
- * valid session for that address — no password, no Google, no consent.
+ * Adapters used to default to `mock`, which was correct for a test and
+ * catastrophic once deployed: it turned real requests into theatre. It was not
+ * hypothetical — with OAUTH_MODE unset, a GET to the Google callback carrying
+ * `code=mock:x:ceo@company.com` returned a valid session for that address, with
+ * no password, no Google and no consent.
+ *
+ * The guard that listed forbidden modes is gone because the modes are gone.
+ * What is asserted here now is stronger and simpler: `mock` is not a value any
+ * integration accepts, so a stale .env carrying one cannot start the process at
+ * all; unconfigured means `disabled`, which fails loudly at the call rather than
+ * answering with something invented; and defaults are safe.
  *
  * These boot a real process, because the rule is enforced while parsing the
  * environment. Importing env.ts inside the suite would read the test
@@ -65,117 +71,105 @@ const CONFIGURED = {
   LINQ_MODE: "live",
   LINQ_API_KEY: "k",
   LINQ_FROM_NUMBER: "+15550000000",
-  WHATSAPP_MODE: "live",
-  WHATSAPP_TOKEN: "t",
-  WHATSAPP_PHONE_NUMBER_ID: "p",
   MAIL_MODE: "live",
   MAIL_WEBHOOK_SECRET: "s",
   MAIL_OUTBOUND_MODE: "live",
   MAIL_OUTBOUND_API_KEY: "re_x",
 };
 
-describe("production refuses mock identity", () => {
-  it("will not boot with mock sign-in", () => {
-    const result = boot({ ...CONFIGURED, OAUTH_MODE: "mock" });
+describe("mock is not a configurable state", () => {
+  const MOCKABLE = [
+    "OAUTH_MODE",
+    "MAILBOX_MODE",
+    "PRAVA_MODE",
+    "LINQ_MODE",
+    "MAIL_MODE",
+    "MAIL_OUTBOUND_MODE",
+    "CHECKOUT_ADAPTER_MODE",
+  ];
 
-    expect(result.ok).toBe(false);
-    expect(result.output).toContain("OAUTH_MODE");
-    expect(result.output).toMatch(/without a password/i);
-  });
+  for (const key of MOCKABLE) {
+    it(`refuses to start with ${key}=mock`, () => {
+      const result = boot({ ...CONFIGURED, [key]: "mock" });
 
-  it("will not boot with a mock mailbox", () => {
-    const result = boot({ ...CONFIGURED, MAILBOX_MODE: "mock" });
-
-    expect(result.ok).toBe(false);
-    expect(result.output).toContain("MAILBOX_MODE");
-    expect(result.output).toMatch(/fixture data/i);
-  });
-
-  it("offers no opt-out for either, however loudly it is asked for", () => {
-    // ALLOW_MOCK_INTEGRATIONS covers money and messaging. Identity is not
-    // negotiable: no environment variable may re-enable it.
-    const result = boot({
-      ...CONFIGURED,
-      OAUTH_MODE: "mock",
-      MAILBOX_MODE: "mock",
-      ALLOW_MOCK_INTEGRATIONS: "true",
+      expect(result.ok).toBe(false);
+      // The schema names the legal values, so an operator upgrading from an old
+      // .env is told what to write instead of being left with "invalid".
+      expect(result.output).toContain(key);
+      expect(result.output).toMatch(/Invalid enum value|Expected/);
     });
+  }
 
+  it("refuses mock even in development, where it used to be the default", () => {
+    const result = boot({ ...CONFIGURED, NODE_ENV: "development", OAUTH_MODE: "mock" });
     expect(result.ok).toBe(false);
-    expect(result.output).toMatch(/no opt-out/i);
   });
 });
 
-describe("production refuses mock integrations unless asked", () => {
-  it("will not boot with fake payments by default", () => {
-    const result = boot({ ...CONFIGURED, PRAVA_MODE: "mock" });
-
-    expect(result.ok).toBe(false);
-    expect(result.output).toContain("PRAVA_MODE");
-    expect(result.output).toContain("ALLOW_MOCK_INTEGRATIONS");
-  });
-
-  it("will not boot with undeliverable messaging by default", () => {
-    const result = boot({ ...CONFIGURED, LINQ_MODE: "mock", MAIL_OUTBOUND_MODE: "mock" });
-
-    expect(result.ok).toBe(false);
-    expect(result.output).toContain("LINQ_MODE");
-    expect(result.output).toContain("MAIL_OUTBOUND_MODE");
-  });
-
-  it("boots a demo deployment only when it says so explicitly", () => {
-    const result = boot({
-      ...CONFIGURED,
-      PRAVA_MODE: "mock",
-      LINQ_MODE: "mock",
-      ALLOW_MOCK_INTEGRATIONS: "true",
-    });
-
-    expect(result.ok).toBe(true);
-  });
-});
-
-describe("a fully configured production boots", () => {
-  it("accepts real credentials for everything", () => {
-    expect(boot(CONFIGURED).ok).toBe(true);
-  });
-
-  it("still refuses a development AUTH_SECRET", () => {
-    const result = boot({
-      ...CONFIGURED,
-      AUTH_SECRET: "renewly-development-secret-do-not-use-in-production",
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.output).toContain("AUTH_SECRET");
-  });
-});
-
-describe("development is unaffected", () => {
-  it("boots on defaults, so a laptop needs no keys", () => {
+describe("unconfigured means off, not invented", () => {
+  it("boots with everything disabled, so a laptop still needs no keys", () => {
     const result = boot({
       NODE_ENV: "development",
-      DATABASE_URL: "pglite://memory",
-      AUTH_SECRET: "renewly-development-secret-do-not-use-in-production",
+      AUTH_SECRET: "a-development-secret-of-entirely-sufficient-length",
     });
+    expect(result.ok).toBe(true);
+  });
 
+  it("defaults every integration to disabled rather than to a stand-in", () => {
+    // Nothing is set beyond the essentials, and the process starts. What it
+    // must not do is start with something pretending to be Google or Prava.
+    const result = boot({
+      NODE_ENV: "development",
+      AUTH_SECRET: "a-development-secret-of-entirely-sufficient-length",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.output).not.toContain("mock");
+  });
+
+  it("boots in production with social sign-in and mailbox switched off", () => {
+    const result = boot({ ...CONFIGURED, OAUTH_MODE: "disabled", MAILBOX_MODE: "disabled" });
     expect(result.ok).toBe(true);
   });
 });
 
-describe("a feature may be turned off honestly", () => {
-  it("boots in production with social sign-in and mailbox disabled", () => {
-    // The alternative to faking a feature is switching it off and saying so —
-    // not pretending. A deployment with no Google secret is a legitimate
-    // deployment; it simply has no Google button.
+describe("a mode claiming to be live must have the credentials to be live", () => {
+  it("refuses OAUTH_MODE=live with no Google credentials", () => {
     const result = boot({
       ...CONFIGURED,
-      OAUTH_MODE: "disabled",
-      MAILBOX_MODE: "disabled",
+      OAUTH_MODE: "live",
       GOOGLE_CLIENT_ID: "",
       GOOGLE_CLIENT_SECRET: "",
     });
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain("GOOGLE_CLIENT_ID");
+  });
 
+  it("refuses a half-configured Google", () => {
+    const result = boot({ ...CONFIGURED, GOOGLE_CLIENT_SECRET: "" });
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain("must be set together");
+  });
+
+  it("refuses a payment rail switched on without a key", () => {
+    const result = boot({ ...CONFIGURED, PRAVA_MODE: "sandbox", PRAVA_SECRET_KEY: "" });
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain("PRAVA_SECRET_KEY");
+  });
+
+  it("refuses outbound mail switched on without a key", () => {
+    const result = boot({ ...CONFIGURED, MAIL_OUTBOUND_MODE: "live", MAIL_OUTBOUND_API_KEY: "" });
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain("MAIL_OUTBOUND_API_KEY");
+  });
+
+  it("still refuses a development AUTH_SECRET in production", () => {
+    const result = boot({ ...CONFIGURED, AUTH_SECRET: "renewly-development-secret-do-not-use-x" });
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain("AUTH_SECRET");
+  });
+
+  it("accepts real credentials for everything", () => {
+    const result = boot(CONFIGURED);
     expect(result.ok).toBe(true);
   });
 });

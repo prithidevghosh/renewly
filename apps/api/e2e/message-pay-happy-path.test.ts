@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { fixture, lastOutbound, sendInbound, simulatorMessages } from "../src/test/factories.js";
 import { ApiClient, createHarness, expectErrorCode, type TestHarness } from "../src/test/helpers.js";
+import { verificationCodeFor } from "../src/test/factories.js";
 
 /**
  * The product in one flow: a renewal email arrives, the agent decides, the
@@ -45,7 +46,6 @@ describe("message to payment, end to end", () => {
       token: string;
       workspaceId: string;
       verificationRequired: boolean;
-      verificationCode: string;
     }>("/v1/auth/signup", {
       email: "founder@northwind.test",
       password: "Sup3rSecret!",
@@ -62,7 +62,8 @@ describe("message to payment, end to end", () => {
     expect(response.body.verificationRequired).toBe(true);
     const verified = await client.post("/v1/auth/verify", {
       email: "founder@northwind.test",
-      code: response.body.verificationCode,
+      // The code is never in the response; it is read from the captured mail.
+      code: verificationCodeFor("founder@northwind.test"),
     });
     expect(verified.status).toBe(200);
   });

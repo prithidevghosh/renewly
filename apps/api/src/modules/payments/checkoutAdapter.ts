@@ -10,7 +10,7 @@ import type { OneTimeCredentials } from "./pravaClient.js";
  * require scraping their billing portals, which we do not do. Instead the
  * credential is charged against a Renewly-controlled test merchant.
  *
- * This is the honest boundary of the product: the rail is real (or mocked per
+ * This is the honest boundary of the product: the rail is real (or driven per
  * env), the merchant settlement is ours.
  */
 
@@ -32,9 +32,13 @@ export interface CheckoutAdapter {
 }
 
 /** Test BINs that must decline, so failure paths are exercisable end to end. */
-const DECLINE_PREFIXES = ["400000"];
+/** Shared with the test double so both paths agree on what a decline is. */
+export const DECLINE_PREFIXES = ["400000"];
 
-function validate(credentials: OneTimeCredentials, order: CheckoutOrder): string | null {
+export function validateCheckout(
+  credentials: OneTimeCredentials,
+  order: CheckoutOrder,
+): string | null {
   if (!credentials.cardNumber || credentials.cardNumber.length < 12) {
     return "Credential is missing a usable card number";
   }
@@ -50,33 +54,6 @@ function validate(credentials: OneTimeCredentials, order: CheckoutOrder): string
     return "Order amount must be greater than zero";
   }
   return null;
-}
-
-export class MockCheckoutAdapter implements CheckoutAdapter {
-  readonly mode = "mock" as const;
-
-  constructor(private readonly options: { forceDecline?: boolean } = {}) {}
-
-  async charge(
-    credentials: OneTimeCredentials,
-    order: CheckoutOrder,
-  ): Promise<CheckoutOutcome> {
-    const invalid = validate(credentials, order);
-    if (invalid) return { ok: false, reason: invalid, code: "INVALID_CREDENTIALS" };
-
-    if (this.options.forceDecline) {
-      return { ok: false, reason: "Checkout declined by test override", code: "FORCED_DECLINE" };
-    }
-    if (DECLINE_PREFIXES.some((prefix) => credentials.cardNumber.startsWith(prefix))) {
-      return { ok: false, reason: "Issuer declined the credential", code: "DO_NOT_HONOR" };
-    }
-
-    return {
-      ok: true,
-      reference: `chk_${order.reference}`,
-      processedAt: new Date().toISOString(),
-    };
-  }
 }
 
 /**
@@ -95,7 +72,7 @@ export class HttpCheckoutAdapter implements CheckoutAdapter {
     credentials: OneTimeCredentials,
     order: CheckoutOrder,
   ): Promise<CheckoutOutcome> {
-    const invalid = validate(credentials, order);
+    const invalid = validateCheckout(credentials, order);
     if (invalid) return { ok: false, reason: invalid, code: "INVALID_CREDENTIALS" };
 
     const body = JSON.stringify({
@@ -162,12 +139,21 @@ export function verifySignature(body: string, signature: string, secret: string)
 let adapter: CheckoutAdapter | null = null;
 
 export function getCheckoutAdapter(): CheckoutAdapter {
-  if (!adapter) {
-    adapter =
-      env.CHECKOUT_ADAPTER_MODE === "http" && env.CHECKOUT_ADAPTER_URL
-        ? new HttpCheckoutAdapter(env.CHECKOUT_ADAPTER_URL, process.env.CHECKOUT_ADAPTER_SECRET)
-        : new MockCheckoutAdapter();
+  // An installed adapter wins over the mode; only a test installs one.
+  if (adapter) return adapter;
+
+  // There is no in-process settlement to fall back to. A checkout that reports
+  // success while nothing was charged is indistinguishable from one that
+  // worked, so an unconfigured adapter refuses instead.
+  if (env.CHECKOUT_ADAPTER_MODE !== "http" || !env.CHECKOUT_ADAPTER_URL) {
+    throw new AppError(
+      "FEATURE_DISABLED",
+      "Checkout settlement is turned off on this deployment. Set " +
+        "CHECKOUT_ADAPTER_MODE=http and CHECKOUT_ADAPTER_URL to enable it.",
+    );
   }
+
+  adapter = new HttpCheckoutAdapter(env.CHECKOUT_ADAPTER_URL, process.env.CHECKOUT_ADAPTER_SECRET);
   return adapter;
 }
 

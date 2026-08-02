@@ -8,7 +8,7 @@ import { requestId } from "./middleware/requestId.js";
 import { securityHeaders } from "./middleware/securityHeaders.js";
 import { agentRoutes } from "./modules/agent/routes.js";
 import { mailboxRoutes } from "./modules/mailbox/routes.js";
-import { approvalRoutes } from "./modules/approvals/routes.js";
+import { approvalRoutes, payLinkRoutes } from "./modules/approvals/routes.js";
 import { authRoutes, meRoutes } from "./modules/auth/routes.js";
 import { channelRoutes, channelWebhookRoutes } from "./modules/channels/routes.js";
 import { contactRoutes } from "./modules/contact/routes.js";
@@ -59,18 +59,16 @@ export function createApp(): Hono<AppEnv> {
     c.json({
       // Booleans and modes only: never disclose which keys are configured.
       llmConfigured: Boolean(env.LLM_API_KEY),
+      // `configured` now means what it says: real credentials are present. It
+      // used to be satisfied by a mock mode too, so a deployment serving
+      // entirely fabricated data reported itself fully configured.
       pravaMode: env.PRAVA_MODE,
-      pravaConfigured: env.PRAVA_MODE === "mock" || Boolean(env.PRAVA_SECRET_KEY),
+      pravaConfigured: Boolean(env.PRAVA_SECRET_KEY),
       linqMode: env.LINQ_MODE,
-      linqConfigured: env.LINQ_MODE === "mock" || Boolean(env.LINQ_API_KEY),
-      whatsappMode: env.WHATSAPP_MODE,
-      whatsappConfigured:
-        env.WHATSAPP_MODE === "mock" ||
-        Boolean(env.WHATSAPP_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID),
+      linqConfigured: Boolean(env.LINQ_API_KEY && env.LINQ_FROM_NUMBER),
       mailMode: env.MAIL_MODE,
       mailOutboundMode: env.MAIL_OUTBOUND_MODE,
-      mailOutboundConfigured:
-        env.MAIL_OUTBOUND_MODE === "mock" || Boolean(env.MAIL_OUTBOUND_API_KEY),
+      mailOutboundConfigured: Boolean(env.MAIL_OUTBOUND_API_KEY),
       checkoutAdapterMode: env.CHECKOUT_ADAPTER_MODE,
       workerEnabled: env.WORKER_ENABLED,
       version: API_VERSION,
@@ -97,6 +95,9 @@ export function createApp(): Hono<AppEnv> {
   app.route("/v1/decisions", decisionRoutes);
   app.route("/v1/agent", agentRoutes);
   app.route("/v1/mailbox", mailboxRoutes);
+  // Token-authenticated pay-link routes resolve first; requests without a
+  // token fall through to the session-authenticated router below.
+  app.route("/v1/approvals", payLinkRoutes);
   app.route("/v1/approvals", approvalRoutes);
   app.route("/v1/payment-sessions", paymentSessionRoutes);
   app.route("/v1/receipts", receiptRoutes);

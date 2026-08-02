@@ -8,7 +8,7 @@ import { requireAuth } from "../../middleware/auth.js";
 import type { AppEnv } from "../../types/context.js";
 import { verifyToken } from "../auth/tokens.js";
 import { resolveAuthContext } from "../auth/service.js";
-import { getMailboxClient } from "./mock.js";
+import { getMailboxClient } from "./registry.js";
 import {
   fetchReceipts,
   getConnection,
@@ -30,12 +30,13 @@ import {
 const MAILBOX_FLOW_COOKIE = "renewly_mailbox";
 const FLOW_TTL_SECONDS = 600;
 
-const providerParam = z.enum(["gmail", "outlook"]);
+/** Gmail is the only supported mailbox. */
+const providerParam = z.enum(["gmail"]);
 
 interface FlowCookie {
   state: string;
   verifier: string;
-  provider: "gmail" | "outlook";
+  provider: "gmail";
   token: string;
   redirectTo: string;
 }

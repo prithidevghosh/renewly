@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { fixture } from "../src/test/factories.js";
 import { ApiClient, createHarness, expectErrorCode, type TestHarness } from "../src/test/helpers.js";
+import { verificationCodeFor } from "../src/test/factories.js";
 
 /**
  * The whole product in one flow: a renewal email arrives, the user confirms what
@@ -41,7 +42,6 @@ describe("renewal happy path", () => {
       token: string;
       workspaceId: string;
       user: { email: string };
-      verificationCode: string;
     }>("/v1/auth/signup", {
       email: "founder@northwind.test",
       password: "Sup3rSecret!",
@@ -57,7 +57,8 @@ describe("renewal happy path", () => {
     // Unverified accounts reach nothing; enter the emailed code first.
     const verified = await client.post("/v1/auth/verify", {
       email: "founder@northwind.test",
-      code: response.body.verificationCode,
+      // The code is never in the response; it is read from the captured mail.
+      code: verificationCodeFor("founder@northwind.test"),
     });
     expect(verified.status).toBe(200);
 

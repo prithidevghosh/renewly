@@ -1,10 +1,8 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { env } from "../../env.js";
 import { AppError } from "../../lib/errors.js";
 import { sha256 } from "../../lib/crypto.js";
-import type { MailboxProvider } from "../../db/schema.js";
 import {
   MAILBOX_SCOPES,
   type MailMessage,
@@ -12,15 +10,21 @@ import {
   type MailboxGrant,
   type MailboxTokens,
   type SearchInput,
-} from "./types.js";
+} from "../../modules/mailbox/types.js";
+import { resetMailboxClients, setMailboxClient } from "../../modules/mailbox/registry.js";
+import { assertTestOnly } from "./guard.js";
 
 /**
- * A mailbox that returns the repository's own email fixtures.
+ * A mailbox that returns the repository's own email fixtures, for tests only.
  *
- * This is not a stub returning lorem ipsum: it serves the same real renewal
- * notices the parser tests run against, so the detect pipeline can be built and
- * demoed end to end before anyone has consented to a real inbox — and so a
- * regression in parsing shows up here too.
+ * It serves the same real renewal notices the parser tests run against, so the
+ * detect pipeline is exercised end to end without anyone consenting to a real
+ * inbox, and a regression in parsing shows up here too.
+ *
+ * It was previously reachable from a running app via MAILBOX_MODE=mock, where
+ * it handed one person fixture data dressed as their own mail — including the
+ * `demo@example.com` address that appeared during onboarding. Now it can only
+ * be installed deliberately, by a test, through setMailboxClient.
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -61,17 +65,8 @@ function headerOf(raw: string, field: string): string | null {
 export class MockMailboxClient implements MailboxClient {
   readonly mode = "mock" as const;
 
-  constructor(readonly provider: MailboxProvider) {
-    // A mock mailbox hands one person fixture data dressed as their own mail.
-    // env.ts refuses to boot on MAILBOX_MODE=mock in production; this makes the
-    // class itself unusable there too.
-    if (env.NODE_ENV === "production") {
-      throw new AppError(
-        "INTERNAL_ERROR",
-        "The mock mailbox is not available in production. It serves fixture " +
-          "data as if it were the user's own mail.",
-      );
-    }
+  constructor(readonly provider: "gmail" = "gmail") {
+    assertTestOnly("MockMailboxClient");
   }
 
   authorizeUrl(input: { state: string; redirectUri: string }): string {
@@ -141,43 +136,12 @@ export class MockMailboxClient implements MailboxClient {
   }
 }
 
-const overrides = new Map<MailboxProvider, MailboxClient>();
-
-export function setMailboxClient(provider: MailboxProvider, client: MailboxClient | null): void {
-  if (client) overrides.set(provider, client);
-  else overrides.delete(provider);
-}
-
-export function resetMailboxClients(): void {
-  overrides.clear();
-}
-
-export async function getMailboxClient(provider: MailboxProvider): Promise<MailboxClient> {
-  const override = overrides.get(provider);
-  if (override) return override;
-  if (env.MAILBOX_MODE === "disabled") {
-    throw new AppError("VALIDATION_ERROR", "Mailbox access is turned off on this deployment", {
-      provider,
-    });
-  }
-  if (env.MAILBOX_MODE === "mock") return new MockMailboxClient(provider);
-
-  if (provider === "gmail") {
-    if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
-      throw new AppError(
-        "VALIDATION_ERROR",
-        "Gmail access needs GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET. The One Tap sign-in " +
-          "credential is not enough: an ID token proves identity and grants no API access.",
-        { provider },
-      );
-    }
-    const { GmailClient } = await import("./gmail.js");
-    return new GmailClient();
-  }
-
-  if (!env.MICROSOFT_CLIENT_ID || !env.MICROSOFT_CLIENT_SECRET) {
-    throw new AppError("VALIDATION_ERROR", "Outlook access is not configured", { provider });
-  }
-  const { OutlookClient } = await import("./outlook.js");
-  return new OutlookClient();
+/**
+ * Installs this double for Gmail, the only supported mailbox, and returns the
+ * undo. The registry that chooses a client lives in the mailbox module; only
+ * the fixture-backed implementation lives here, and it arrives by injection.
+ */
+export function installMockMailbox(): () => void {
+  setMailboxClient("gmail", new MockMailboxClient("gmail"));
+  return () => resetMailboxClients();
 }
