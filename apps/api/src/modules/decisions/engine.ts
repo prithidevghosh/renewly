@@ -198,6 +198,119 @@ const UNUSED_THRESHOLD_DAYS = 30;
 /** A renewal further out than this with nothing wrong is worth deferring. */
 const SNOOZE_HORIZON_DAYS = 60;
 
+/* -------------------------------------------------------------------------- */
+/* Overspend predicates                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Every way V1 is allowed to call something overspend. All four read the
+ * invoice, the policy and the catalog — never usage — so a decision can be made
+ * on the day a receipt arrives, with nobody interviewed about anything.
+ *
+ * `decide` routes through these rather than repeating the arithmetic, so a test
+ * that pins a predicate pins the behaviour that follows from it.
+ */
+
+export type EnginePeer = Pick<
+  EngineSubscription,
+  "id" | "amount" | "billingCycle" | "jobCategory" | "merchantName"
+>;
+
+/** The category this subscription belongs to is spending past its ceiling. */
+export function isOverCategoryCeiling(
+  sub_: Pick<EngineSubscription, "amount" | "currency" | "billingCycle" | "jobCategory">,
+  policy: EnginePolicy,
+  peers: readonly EnginePeer[] = [],
+): boolean {
+  if (!sub_.jobCategory) return false;
+  const ceiling = policy.categoryCeilings[sub_.jobCategory];
+  if (!ceiling) return false;
+
+  const spend = monthlyRunRate(
+    [
+      { amount: sub_.amount, billingCycle: sub_.billingCycle },
+      ...peers
+        .filter((peer) => peer.jobCategory === sub_.jobCategory)
+        .map((peer) => ({ amount: peer.amount, billingCycle: peer.billingCycle })),
+    ],
+    sub_.currency,
+  );
+  return cmp(spend, ceiling, sub_.currency) > 0;
+}
+
+/**
+ * A cheaper tool in the catalog covers the same job at this seat count.
+ * `diff` is the annual difference, "0.00" when there is nothing cheaper.
+ */
+export function isExpensivePlanVsCatalog(
+  sub_: Pick<
+    EngineSubscription,
+    "merchantName" | "amount" | "currency" | "billingCycle" | "seatsTotal"
+  >,
+  catalog: CatalogTool | null = findCatalogTool(sub_.merchantName),
+): { cheaper: boolean; diff: string } {
+  const currency = sub_.currency;
+  const seats = Math.max(1, sub_.seatsTotal);
+  const currentAnnual = annualize(
+    normalizeAmount(sub_.amount, currency),
+    sub_.billingCycle,
+    currency,
+  );
+
+  const [cheapest] = cheaperAlternatives(catalog, currentAnnual, seats);
+  if (!cheapest) return { cheaper: false, diff: "0.00" };
+
+  return {
+    cheaper: true,
+    diff: sub(currentAnnual, catalogAnnualCost(cheapest, seats), currency),
+  };
+}
+
+/**
+ * Billed monthly when the same tier has a cheaper annual term. Pure plan maths:
+ * it says nothing about whether the tool is used.
+ */
+export function isAnnualCheaperThanMonthly(
+  sub_: Pick<
+    EngineSubscription,
+    "merchantName" | "amount" | "currency" | "billingCycle" | "seatsTotal"
+  >,
+  catalog: CatalogTool | null = findCatalogTool(sub_.merchantName),
+): boolean {
+  return cmp(annualTermSaving(sub_, catalog), "0.00", sub_.currency) > 0;
+}
+
+/** Annual money saved by moving to the annual term, "0.00" when there is none. */
+export function annualTermSaving(
+  sub_: Pick<
+    EngineSubscription,
+    "merchantName" | "amount" | "currency" | "billingCycle" | "seatsTotal"
+  >,
+  catalog: CatalogTool | null = findCatalogTool(sub_.merchantName),
+): string {
+  const currency = sub_.currency;
+  if (sub_.billingCycle !== "monthly" || !catalog?.annualMonthlyPrice) return "0.00";
+
+  const seats = Math.max(1, sub_.seatsTotal);
+  const currentAnnual = annualize(
+    normalizeAmount(sub_.amount, currency),
+    sub_.billingCycle,
+    currency,
+  );
+  const saving = sub(currentAnnual, catalogAnnualCost(catalog, seats, true), currency);
+  return cmp(saving, "0.00", currency) > 0 ? saving : "0.00";
+}
+
+/** Tagged experimental and priced above the per-action ceiling. */
+export function isMarkedExperimentalAndExpensive(
+  sub_: Pick<EngineSubscription, "criticality" | "amount" | "currency">,
+  policy: EnginePolicy,
+): boolean {
+  if (sub_.criticality !== "experimental") return false;
+  if (!policy.spendCeiling) return false;
+  return cmp(normalizeAmount(sub_.amount, sub_.currency), policy.spendCeiling, sub_.currency) > 0;
+}
+
 /**
  * Deterministic core of the decision agent. Rules are evaluated in a fixed
  * order and every one that fires is recorded in `reasons`, so the narrative the
@@ -262,21 +375,20 @@ export function decide(input: EngineInput): EngineOutcome {
     }
   }
 
-  let categoryBudgetExceeded = false;
   const categoryCeiling = sub_.jobCategory ? policy.categoryCeilings[sub_.jobCategory] : undefined;
+  const categoryBudgetExceeded = isOverCategoryCeiling(sub_, policy, input.peers);
   if (categoryCeiling && sub_.jobCategory) {
-    const categorySpend = monthlyRunRate(
-      [
-        { amount, billingCycle: sub_.billingCycle },
-        ...input.peers
-          .filter((p) => p.jobCategory === sub_.jobCategory)
-          .map((p) => ({ amount: p.amount, billingCycle: p.billingCycle })),
-      ],
-      currency,
-    );
     inputsUsed.push(`policy.category_ceiling.${sub_.jobCategory}=${categoryCeiling}`);
-    if (cmp(categorySpend, categoryCeiling, currency) > 0) {
-      categoryBudgetExceeded = true;
+    if (categoryBudgetExceeded) {
+      const categorySpend = monthlyRunRate(
+        [
+          { amount, billingCycle: sub_.billingCycle },
+          ...input.peers
+            .filter((p) => p.jobCategory === sub_.jobCategory)
+            .map((p) => ({ amount: p.amount, billingCycle: p.billingCycle })),
+        ],
+        currency,
+      );
       policyFlags.push("CATEGORY_CEILING_EXCEEDED");
       reasons.push(
         `Category "${sub_.jobCategory}" run rate ${categorySpend} ${currency} exceeds its ${normalizeAmount(categoryCeiling, currency)} ${currency} ceiling.`,
@@ -306,6 +418,7 @@ export function decide(input: EngineInput): EngineOutcome {
     policyFlags.push("ABOVE_SPEND_CEILING");
     inputsUsed.push("derived.above_spend_ceiling=true");
   }
+  const experimentalAndExpensive = isMarkedExperimentalAndExpensive(sub_, policy);
 
   const daysToRenewal =
     sub_.nextRenewalAt !== null
@@ -314,11 +427,8 @@ export function decide(input: EngineInput): EngineOutcome {
   if (daysToRenewal !== null) inputsUsed.push(`derived.days_to_renewal=${daysToRenewal}`);
 
   const cheapest = candidates[0] ?? null;
-  const annualBillingSaving =
-    catalogTool?.annualMonthlyPrice && sub_.billingCycle === "monthly"
-      ? sub(doNothingAnnual, catalogAnnualCost(catalogTool, seatsTotal, true), currency)
-      : "0.00";
-  const hasTermDiscount = cmp(annualBillingSaving, "0.00", currency) > 0;
+  const annualBillingSaving = annualTermSaving({ ...sub_, seatsTotal }, catalogTool);
+  const hasTermDiscount = isAnnualCheaperThanMonthly({ ...sub_, seatsTotal }, catalogTool);
   if (hasTermDiscount && catalogTool) {
     inputsUsed.push(`catalog.term_switch_saving=${annualBillingSaving}`);
   }
@@ -372,7 +482,7 @@ export function decide(input: EngineInput): EngineOutcome {
       confidence = 0.85;
       reasons.push("Marked must_keep with no cheaper equivalent in the catalog, so renew.");
     }
-  } else if (sub_.criticality === "experimental" && aboveCeiling) {
+  } else if (experimentalAndExpensive) {
     /* Rule 3 — an experimental tool above the spend ceiling. */
     if (cheapest) {
       recommendation = "switch_vendor";
