@@ -14,6 +14,9 @@ import {
   readEvents,
   startSession,
 } from "./service.js";
+import { kickoff } from "./runner.js";
+import { DEFAULT_LOOKBACK_DAYS, LOOKBACK_DAYS, isLookbackDays } from "./lookback.js";
+import { sweepForProposals } from "../workers/sweep.js";
 import type { AgentEvent, AgentSession } from "../../db/schema.js";
 
 /**
@@ -61,8 +64,29 @@ function serializeEvent(event: AgentEvent) {
   };
 }
 
+/**
+ * One immediate sweep pass, for operations and tests. The worker loop runs the
+ * same function on its own schedule; this exists so the loop is never the only
+ * way to trigger a proposal.
+ */
+agentRoutes.post("/sweep", async (c) => {
+  const result = await sweepForProposals();
+  return c.json(result);
+});
+
 const startSchema = z.object({
   kind: z.enum(["onboarding", "detect", "decide", "monthly_sweep"]).default("onboarding"),
+  /**
+   * How far back to read the mailbox. Constrained to the offered windows rather
+   * than any integer: an arbitrary number here is a Gmail bill, and the UI has
+   * no way to render a window it does not know about.
+   */
+  lookbackDays: z
+    .number()
+    .refine(isLookbackDays, {
+      message: `lookbackDays must be one of ${LOOKBACK_DAYS.join(", ")}`,
+    })
+    .default(DEFAULT_LOOKBACK_DAYS),
   state: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -74,8 +98,15 @@ agentRoutes.post("/sessions", async (c) => {
     workspaceId: workspace.id,
     userId: user.id,
     kind: input.kind,
-    ...(input.state ? { state: input.state } : {}),
+    // The explicit field wins over anything the same key carries in `state`,
+    // so the validated value is the one the run reads.
+    state: { ...(input.state ?? {}), lookbackDays: input.lookbackDays },
   });
+
+  // Detached on purpose: the client needs the id back now so it can open the
+  // stream, and the run takes as long as reading a mailbox takes. Everything
+  // the run produces reaches the client as events, never as this response.
+  kickoff(session);
 
   return c.json({ session: serializeSession(session) }, 201);
 });
@@ -235,6 +266,12 @@ agentRoutes.post("/sessions/:id/input", async (c) => {
     ...(input.promptKey ? { promptKey: input.promptKey } : {}),
     answer: input.answer,
   });
+
+  // An answer that unblocked the run has to restart the driver — the loop that
+  // asked the question returned when it parked. `answerPrompt` leaves the
+  // session `awaiting_input` if something else is still open, so this only
+  // fires when the run can genuinely continue.
+  if (result.session.status === "running") kickoff(result.session);
 
   return c.json({
     session: serializeSession(result.session),

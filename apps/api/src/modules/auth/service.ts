@@ -60,7 +60,6 @@ export interface AuthResult {
   token: string;
   expiresAt: string;
   /** Present on a password signup in mock mail mode only. */
-  verificationCode?: string | null;
 }
 
 function normalizeEmail(email: string): string {
@@ -128,7 +127,6 @@ export async function signup(input: SignupInput, db: Database = getDb()): Promis
     workspaceId: workspace.id,
     token,
     expiresAt,
-    verificationCode: issued.code,
   };
 }
 

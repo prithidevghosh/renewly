@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { getDb, type Database } from "../../db/client.js";
 import {
   approvalRequests,
+  conversationThreads,
   subscriptions,
   type ApprovalRequest,
   type ChannelName,
@@ -38,11 +39,14 @@ import {
   composeWhy,
 } from "./composer.js";
 import { parseIntent, type Intent } from "./intentParser.js";
+import { composeFallbackReply } from "./responder.js";
 import { acceptsIntent } from "./stateMachine.js";
 import {
   ensureThread,
   enqueueOutbound,
   getActiveConnection,
+  isPlaceholderThreadId,
+  placeholderThreadId,
   recordMessage,
 } from "./service.js";
 
@@ -81,7 +85,7 @@ export async function notifyApproval(input: NotifyInput): Promise<NotifyResult> 
     {
       workspaceId: auth.workspace.id,
       channel,
-      channelThreadId: threadIdFor(channel, connection.externalId),
+      channelThreadId: placeholderThreadId(auth.workspace.id, channel, connection.externalId),
       participantExternalId: connection.externalId,
     },
     db,
@@ -145,11 +149,6 @@ export async function notifyApproval(input: NotifyInput): Promise<NotifyResult> 
   });
 
   return { approval, thread, body, outboxId: queued.id };
-}
-
-function threadIdFor(channel: ChannelName, externalId: string): string {
-  const prefix = channel === "imessage" ? "linq" : channel === "whatsapp" ? "wa" : "sim";
-  return `${prefix}_thread_${externalId}`;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -223,7 +222,16 @@ export async function handleInbound(
   }
 
   if (parsed.intent === "HELP" || !open) {
-    const body = parsed.intent === "HELP" ? composeHelp() : noOpenApprovalReply(parsed.intent);
+    // HELP is a direct request for the list. Anything else with no proposal
+    // open gets a written answer — the rules have nothing to act on, but the
+    // person still asked something.
+    const body =
+      parsed.intent === "HELP"
+        ? composeHelp()
+        : parsed.intent === "UNKNOWN"
+          ? (await composeFallbackReply({ auth, thread, text: input.text, open: null, db })).body
+          : noOpenApprovalReply(parsed.intent);
+
     await reply(auth, thread, body, db, { urgent: true });
     return {
       intent: parsed.intent,
@@ -288,11 +296,22 @@ export async function handleInbound(
     return applyApprove(auth, thread, open, context.subscription, context.decision, parsed.intent, db);
   }
 
-  // RETRY and UNKNOWN both mean "we did not act"; give the user the commands.
+  // RETRY and UNKNOWN both mean "we did not act". RETRY has a fixed answer;
+  // UNKNOWN gets a written one, with the open proposal in hand so the reply can
+  // actually address what was asked.
   const body =
     parsed.intent === "RETRY"
       ? "Nothing to retry on this proposal. Reply APPROVE to go ahead."
-      : composeHelp();
+      : (
+          await composeFallbackReply({
+            auth,
+            thread,
+            text: input.text,
+            open: { approval: open, subscription: context.subscription, decision: context.decision },
+            db,
+          })
+        ).body;
+
   await reply(auth, thread, body, db, { urgent: true });
   return { intent: parsed.intent, approvalId: open.id, state: open.state, reply: body, acted: false };
 }
@@ -507,14 +526,40 @@ export async function deliverOutbound(
   const adapter = getChannelAdapter(outbox.channel);
   const isProposal = outbox.payload.kind === "proposal";
 
+  /*
+   * Continue the existing chat when the provider has given us its id. Sending
+   * with no thread id opens a fresh chat every time, which on iMessage means
+   * the reply arrives on a conversation the previous message was not part of.
+   */
+  const existingThreadId = await providerThreadId(outbox.threadId, db);
+
   const result = isProposal
     ? await adapter.sendProposal({
         to: outbox.destination,
         proposal: { body: outbox.body },
         actions: PROPOSAL_ACTIONS,
-        threadId: undefined,
+        ...(existingThreadId ? { threadId: existingThreadId } : {}),
       })
-    : await adapter.sendText({ to: outbox.destination, body: outbox.body });
+    : await adapter.sendText({
+        to: outbox.destination,
+        body: outbox.body,
+        ...(existingThreadId ? { threadId: existingThreadId } : {}),
+      });
+
+  // The first send is what teaches us the provider's id; record it so the next
+  // one continues this chat rather than starting another. Only a placeholder is
+  // ever replaced — a real id is never overwritten by a different real one.
+  if (
+    outbox.threadId &&
+    result.externalThreadId &&
+    !isPlaceholderThreadId(result.externalThreadId) &&
+    existingThreadId === null
+  ) {
+    await db
+      .update(conversationThreads)
+      .set({ channelThreadId: result.externalThreadId, updatedAt: new Date() })
+      .where(eq(conversationThreads.id, outbox.threadId));
+  }
 
   if (outbox.threadId) {
     const message = await recordMessage(
@@ -552,6 +597,23 @@ export async function deliverOutbound(
 
   logger.debug({ outboxId: outbox.id, channel: outbox.channel }, "outbound delivered");
   return { externalMessageId: result.externalMessageId };
+}
+
+/**
+ * The provider's own chat id for a thread, or null while we are still on the
+ * placeholder minted before the first send.
+ */
+async function providerThreadId(
+  threadId: string | null,
+  db: Database,
+): Promise<string | null> {
+  if (!threadId) return null;
+  const [thread] = await db
+    .select({ channelThreadId: conversationThreads.channelThreadId })
+    .from(conversationThreads)
+    .where(eq(conversationThreads.id, threadId));
+  if (!thread) return null;
+  return isPlaceholderThreadId(thread.channelThreadId) ? null : thread.channelThreadId;
 }
 
 /** Sends the in-thread proof after a payment settles. */

@@ -63,16 +63,27 @@ function prettyTransport(): LoggerOptions["transport"] {
        * follows is context rather than the headline. Hidden here:
        *  - pid/hostname/service/env  constant for the whole process
        *  - method/path               already in the message for request lines
-       *  - requestId                 shown, but last, via messageFormat below
+       *  - requestId/agentTag        shown, but as prefixes, via messageFormat
+       *  - sessionId/userId/...      folded into agentTag for the pretty view;
+       *                              still on the JSON object for grepping
        */
-      ignore: "pid,hostname,service,env,method,path",
+      ignore:
+        "pid,hostname,service,env,method,path,agentTag,sessionId,userId,userEmail,workspaceId,kind",
       messageKey: "msg",
       errorLikeObjectKeys: ["err", "error"],
       // One line per event unless there is an error to expand.
       singleLine: true,
-      // A short request-id tag lets you follow one request through the log
-      // without the full ULID taking up half the width.
-      messageFormat: "{if requestId}[2m[{requestId}][0m {end}{msg}",
+      /*
+       * Two optional prefixes before the message:
+       *   [01J2X…]                   request id, to follow one request through
+       *   [detect·ada@example.com·8f3a1b2c]
+       *                              which user's agent, on which run
+       * Agent work happens off the back of a request that has already returned,
+       * so without the second tag a line like "12 receipts" belongs to nobody.
+       */
+      messageFormat:
+        "{if requestId}[2m[{requestId}][0m {end}" +
+        "{if agentTag}[35m[{agentTag}][0m {end}{msg}",
     },
   };
 }

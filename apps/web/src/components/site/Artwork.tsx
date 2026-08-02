@@ -42,6 +42,16 @@ const ARTWORKS = {
     scale: 1,
     mobileScale: 1.02,
   },
+  agent: {
+    // Purpose-built for the product workspace: desktop and mobile compositions
+    // preserve a calm portrait and a dark lower field for live UI copy.
+    src: "/assets/agent-workspace-desktop-v2.png",
+    mobileSrc: "/assets/agent-workspace-mobile-v2.png",
+    position: "50% 50%",
+    mobilePosition: "50% 50%",
+    scale: 1,
+    mobileScale: 1,
+  },
   proof: {
     src: "/assets/smiling_vertical.jpg",
     position: "100% 38%",

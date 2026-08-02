@@ -1,13 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "./errors.js";
 import {
-  clearMailbox,
-  readMailbox,
   sendEmail,
   sendViaResend,
   setMailTransport,
   type ResendConfig,
 } from "./mailer.js";
+import { captureTransport, clearMailbox, readMailbox } from "../test/doubles/mailer.js";
 
 /**
  * Mock mode is what every other test runs against, so the wire contract for the
@@ -121,12 +120,25 @@ describe("sendViaResend", () => {
 });
 
 describe("sendEmail", () => {
-  it("captures rather than sends in mock mode", async () => {
+  it("refuses rather than pretending when outbound mail is disabled", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    // No transport installed and MAIL_OUTBOUND_MODE=disabled. There used to be a
+    // mock mode here that filed the message in memory and reported success,
+    // which meant a signup could complete while the verification code reached
+    // nobody. Refusing is the behaviour that cannot be mistaken for delivery.
+    await expect(sendEmail(message)).rejects.toMatchObject({ code: "FEATURE_DISABLED" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(readMailbox()).toHaveLength(0);
+  });
+
+  it("captures when a capture transport is installed", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    setMailTransport(captureTransport());
 
     const result = await sendEmail(message);
 
-    expect(result.mode).toBe("mock");
+    expect(result.mode).toBe("transport");
     expect(result.id).toMatch(/^eml_/);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(readMailbox()).toHaveLength(1);
@@ -137,7 +149,7 @@ describe("sendEmail", () => {
     const seen: string[] = [];
     setMailTransport(async (email) => {
       seen.push(email.to);
-      return { id: "stub", mode: "mock" };
+      return { id: "stub", mode: "transport" as const };
     });
 
     await sendEmail(message);

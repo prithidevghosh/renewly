@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ApiClient } from "./helpers.js";
+import { readMailbox } from "./doubles/mailer.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.resolve(here, "..", "..", "fixtures");
@@ -32,6 +33,28 @@ export interface SignedUpUser {
  * mail mode. That means the suite drives the real verification path rather than
  * a back door — if verification breaks, these fail.
  */
+/**
+ * Pulls the six-digit code out of the most recent verification mail for an
+ * address. Fails loudly rather than returning undefined: "no code" almost
+ * always means the transport was not installed, and a test that carried on
+ * would fail somewhere much further from the cause.
+ */
+export function verificationCodeFor(email: string): string {
+  const message = readMailbox()
+    .slice()
+    .reverse()
+    .find((sent) => sent.to === email && /\b\d{6}\b/.test(sent.text));
+  if (!message) {
+    throw new Error(
+      `no verification mail captured for ${email}. The harness installs a capture ` +
+        "transport; check setMailTransport was not reset.",
+    );
+  }
+  const code = message.text.match(/\b(\d{6})\b/)?.[1];
+  if (!code) throw new Error(`verification mail for ${email} carried no six-digit code`);
+  return code;
+}
+
 export async function signUp(
   client: ApiClient,
   overrides: Partial<{ email: string; password: string; name: string }> = {},
@@ -45,7 +68,6 @@ export async function signUp(
     token: string;
     workspaceId: string;
     user: { id: string };
-    verificationCode: string | null;
   }>("/v1/auth/signup", { email, password, name });
 
   if (response.status !== 201) {
@@ -54,10 +76,10 @@ export async function signUp(
 
   client.setToken(response.body.token);
 
-  const code = response.body.verificationCode;
-  if (!code) {
-    throw new Error("signup returned no verification code — is MAIL_OUTBOUND_MODE mock?");
-  }
+  // The code is never in the response any more — it goes to the inbox, and the
+  // harness's capture transport is that inbox. Reading it here is the same
+  // thing a person does: open the mail and copy the digits.
+  const code = verificationCodeFor(email);
 
   const verified = await client.post("/v1/auth/verify", { email, code });
   if (verified.status !== 200) {
@@ -87,7 +109,6 @@ export async function signUpUnverified(
     token: string;
     workspaceId: string;
     user: { id: string };
-    verificationCode: string;
   }>("/v1/auth/signup", { email, password, name });
 
   if (response.status !== 201) {
@@ -101,7 +122,7 @@ export async function signUpUnverified(
     workspaceId: response.body.workspaceId,
     email,
     password,
-    verificationCode: response.body.verificationCode,
+    verificationCode: verificationCodeFor(email),
   };
 }
 

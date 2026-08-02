@@ -144,6 +144,18 @@ export const CATALOG: CatalogTool[] = [
     cons: ["Search degrades in large workspaces"],
   },
   {
+    slug: "coda",
+    name: "Coda",
+    category: "docs",
+    monthlyPrice: "12.00",
+    annualMonthlyPrice: "10.00",
+    freeTier: true,
+    note: "Docs with embedded tables and automations; overlaps Notion's job.",
+    switchFriction: "medium",
+    pros: ["Stronger built-in tables and automations", "Free tier for small docs"],
+    cons: ["Per-doc-maker pricing surprises teams", "Smaller template ecosystem"],
+  },
+  {
     slug: "linear-basic",
     name: "Linear Basic",
     category: "project_management",

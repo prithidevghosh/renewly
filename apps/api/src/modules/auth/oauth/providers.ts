@@ -11,14 +11,14 @@ import {
 } from "./types.js";
 
 /**
- * Google and Microsoft, both plain OAuth 2.0 + OIDC with PKCE.
+ * Google, plain OAuth 2.0 + OIDC with PKCE. Microsoft has been removed.
  *
  * Written against:
  *   https://developers.google.com/identity/protocols/oauth2/web-server
- *   https://learn.microsoft.com/entra/identity-platform/v2-oauth2-auth-code-flow
  *
- * Neither has been run against a real client id in this repo, so `mock` is the
- * default and `OAUTH_MODE=live` is the switch.
+ * `OAUTH_MODE=live` with a client id and secret is the only way this runs.
+ * There is no mode that stands in for the provider: the double that tests use
+ * lives in src/test/doubles and is injected through setOAuthClient below.
  */
 
 interface TokenResponse {
@@ -37,13 +37,6 @@ interface GoogleUserInfo {
   email_verified?: boolean;
   name?: string;
   picture?: string;
-}
-
-interface MicrosoftUserInfo {
-  id?: string;
-  mail?: string;
-  userPrincipalName?: string;
-  displayName?: string;
 }
 
 abstract class BaseOAuthClient implements OAuthClient {
@@ -173,98 +166,6 @@ class GoogleOAuthClient extends BaseOAuthClient {
   }
 }
 
-class MicrosoftOAuthClient extends BaseOAuthClient {
-  readonly provider = "microsoft" as const;
-  protected readonly authorizeEndpoint = `https://login.microsoftonline.com/${env.MICROSOFT_TENANT}/oauth2/v2.0/authorize`;
-  protected readonly tokenEndpoint = `https://login.microsoftonline.com/${env.MICROSOFT_TENANT}/oauth2/v2.0/token`;
-  protected readonly clientId = env.MICROSOFT_CLIENT_ID ?? "";
-  protected readonly clientSecret = env.MICROSOFT_CLIENT_SECRET ?? "";
-
-  protected async fetchProfile(accessToken: string): Promise<OAuthExchange["profile"]> {
-    const info = await this.getJson<MicrosoftUserInfo>(
-      "https://graph.microsoft.com/v1.0/me",
-      accessToken,
-    );
-    // Personal accounts often have no `mail`; the principal name is the address.
-    const email = info.mail ?? info.userPrincipalName;
-    if (!info.id || !email) {
-      throw new AppError("UNAUTHORIZED", "Microsoft returned no id or email");
-    }
-    return {
-      providerAccountId: info.id,
-      email,
-      // Graph exposes no verification flag. Entra will not issue a token for an
-      // address the account does not control, so the token itself is the proof.
-      emailVerified: true,
-      name: info.displayName ?? null,
-      avatarUrl: null,
-    };
-  }
-}
-
-/**
- * Deterministic stand-in. The profile is derived from the authorization code,
- * so a test can drive "the same Google account signs in twice" or "a different
- * account collides on email" simply by choosing the code it sends back.
- *
- * Format: `mock:<subject>:<email>` — anything else yields a stable fallback.
- */
-export class MockOAuthClient implements OAuthClient {
-  readonly mode = "mock" as const;
-
-  constructor(readonly provider: SocialProvider) {
-    // env.ts already refuses to boot with OAUTH_MODE=mock in production. This
-    // is the second lock on the same door: mock sign-in accepts any identity
-    // without a credential, so it must be impossible to reach in production
-    // even through a code path that skipped the boot check.
-    assertMockAuthAllowed();
-  }
-
-  authorizeUrl(input: AuthorizeInput): string {
-    const url = new URL(`${env.API_URL}/v1/auth/oauth/${this.provider}/callback`);
-    url.searchParams.set("state", input.state);
-    url.searchParams.set("code", `mock:${this.provider}-subject:${this.provider}@example.com`);
-    url.searchParams.set("mock", "1");
-    return url.toString();
-  }
-
-  async exchange(input: ExchangeInput): Promise<OAuthExchange> {
-    const parts = input.code.split(":");
-    const subject = parts[1] || `${this.provider}-subject`;
-    const email = parts[2] || `${this.provider}@example.com`;
-
-    return {
-      profile: {
-        providerAccountId: subject,
-        email,
-        emailVerified: true,
-        name: email.split("@")[0] ?? "Mock User",
-        avatarUrl: null,
-      },
-      tokens: {
-        // Distinct per subject so a test can prove the right token was stored.
-        accessToken: `mock-access-${sha256(subject).slice(0, 16)}`,
-        refreshToken: `mock-refresh-${sha256(email).slice(0, 16)}`,
-        expiresIn: 3600,
-        scopes: LOGIN_SCOPES[this.provider],
-      },
-    };
-  }
-}
-
-/**
- * Refuses mock sign-in outside development and test. Exported so the ID-token
- * path enforces the identical rule — two entrances, one guard.
- */
-export function assertMockAuthAllowed(): void {
-  if (env.NODE_ENV === "production") {
-    throw new AppError(
-      "INTERNAL_ERROR",
-      "Mock sign-in is not available in production. It accepts any identity " +
-        "without a credential and must never authenticate a real request.",
-    );
-  }
-}
 
 const overrides = new Map<SocialProvider, OAuthClient>();
 
@@ -283,17 +184,18 @@ export function getOAuthClient(provider: SocialProvider): OAuthClient {
   if (override) return override;
 
   if (env.OAUTH_MODE === "disabled") {
-    throw new AppError("VALIDATION_ERROR", "Social sign-in is turned off on this deployment", {
-      provider,
-    });
+    throw new AppError(
+      "FEATURE_DISABLED",
+      "Social sign-in is turned off on this deployment. Set OAUTH_MODE=live and " +
+        "configure the provider's client id and secret to enable it.",
+      { provider },
+    );
   }
-  if (env.OAUTH_MODE === "mock") return new MockOAuthClient(provider);
 
-  const configured =
-    provider === "google" ? Boolean(env.GOOGLE_CLIENT_ID) : Boolean(env.MICROSOFT_CLIENT_ID);
+  const configured = Boolean(env.GOOGLE_CLIENT_ID);
   if (!configured) {
-    throw new AppError("VALIDATION_ERROR", `${provider} sign-in is not configured`, { provider });
+    throw new AppError("FEATURE_DISABLED", `${provider} sign-in is not configured`, { provider });
   }
 
-  return provider === "google" ? new GoogleOAuthClient() : new MicrosoftOAuthClient();
+  return new GoogleOAuthClient();
 }

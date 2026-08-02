@@ -50,11 +50,15 @@ export const accessLog = (): MiddlewareHandler<AppEnv> => async (c, next) => {
     };
     if (auth) {
       payload.userId = auth.user.id;
+      payload.userEmail = auth.user.email;
       payload.workspaceId = auth.workspace.id;
     }
 
     const log = c.get("log");
-    const message = `${c.req.method} ${c.req.path} ${status} ${durationMs}ms`;
+    // The email rides in the message rather than the object so the pretty view
+    // says who did this without printing two ULIDs on every line.
+    const who = auth ? ` · ${auth.user.email}` : "";
+    const message = `${c.req.method} ${c.req.path} ${status} ${durationMs}ms${who}`;
 
     if (QUIET_PATHS.has(c.req.path)) log.debug(payload, message);
     else if (status >= 500) log.error(payload, message);

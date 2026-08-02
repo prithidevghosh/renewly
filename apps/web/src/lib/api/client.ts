@@ -44,10 +44,10 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   return body as T;
 }
 
-export function oauthUrl(provider: "google" | "microsoft", redirectTo = "/onboarding") {
+export function oauthUrl(provider: "google", redirectTo = "/onboarding") {
   return `${API_ORIGIN}/v1/auth/oauth/${provider}/start?redirectTo=${encodeURIComponent(redirectTo)}`;
 }
 
-export function mailboxConnectUrl(provider: "gmail" | "outlook", redirectTo = "/onboarding") {
+export function mailboxConnectUrl(provider: "gmail", redirectTo = "/onboarding") {
   return `${API_ORIGIN}/v1/mailbox/connect/${provider}?redirectTo=${encodeURIComponent(redirectTo)}`;
 }

@@ -29,6 +29,18 @@ interface GmailTokenResponse {
   error_description?: string;
 }
 
+/** https://developers.google.com/workspace/gmail/api/guides/handle-errors */
+interface GmailErrorResponse {
+  error?: {
+    code?: number;
+    message?: string;
+    status?: string;
+    errors?: Array<{ reason?: string; message?: string; domain?: string }>;
+  };
+}
+
+const READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+
 interface GmailListResponse {
   messages?: Array<{ id?: string }>;
   nextPageToken?: string;
@@ -88,6 +100,30 @@ export class GmailClient implements MailboxClient {
       throw new AppError("UNAUTHORIZED", "Google issued no access token for the mailbox", {
         providerError: token.error ?? null,
       });
+    }
+
+    /*
+     * Google's consent screen lists each non-login scope as its own checkbox,
+     * and the user may leave Gmail access unticked while still completing the
+     * flow. The exchange then succeeds and returns a token that cannot read a
+     * single message, so the failure surfaced much later as an opaque 403 from
+     * whichever call happened to run first.
+     *
+     * Check what was actually granted, and say so here — at the point the user
+     * just made the choice, when "tick the Gmail box" is a sentence that still
+     * means something to them.
+     *
+     * https://developers.google.com/identity/protocols/oauth2/web-server
+     */
+    const granted = token.scope ? token.scope.split(" ").filter(Boolean) : [];
+    if (!granted.includes(READ_SCOPE)) {
+      throw new AppError(
+        "UNAUTHORIZED",
+        "Renewly was not granted permission to read this mailbox, so it cannot be " +
+          "connected. Google asks for Gmail access as a separate tick box on the " +
+          "consent screen — please reconnect and leave it ticked.",
+        { granted, required: READ_SCOPE },
+      );
     }
 
     const profile = await this.getJson<{ emailAddress?: string }>(
@@ -188,11 +224,42 @@ export class GmailClient implements MailboxClient {
     const response = await fetch(url, {
       headers: { authorization: `Bearer ${accessToken}`, accept: "application/json" },
     });
+
     if (!response.ok) {
-      throw new AppError("UNAUTHORIZED", `Gmail returned ${response.status}`, {
+      /*
+       * Google says exactly what is wrong, in the body. Reporting only the
+       * status turned every distinct cause — API not enabled, scope withheld,
+       * admin policy, rate limit — into the same unactionable "Gmail returned
+       * 403", which is a sentence nobody can fix.
+       *
+       * https://developers.google.com/workspace/gmail/api/guides/handle-errors
+       */
+      const body = (await response.json().catch(() => ({}))) as GmailErrorResponse;
+      const reason = body.error?.errors?.[0]?.reason ?? body.error?.status ?? null;
+      const detail = body.error?.message ?? null;
+
+      throw new AppError("UNAUTHORIZED", detail ?? `Gmail returned ${response.status}`, {
         status: response.status,
+        reason,
+        // The most common causes, each with the one thing that fixes it.
+        hint:
+          reason === "accessNotConfigured" || body.error?.status === "PERMISSION_DENIED"
+            ? "Enable the Gmail API for this Google Cloud project: console.cloud.google.com " +
+              "-> APIs & Services -> Library -> Gmail API -> Enable. A client id alone does " +
+              "not grant API access."
+            : reason === "insufficientPermissions"
+              ? "The token is missing gmail.readonly. Google shows a separate checkbox for " +
+                "Gmail access on the consent screen and it can be left unticked; disconnect " +
+                "and reconnect, making sure that box is ticked."
+              : reason === "domainPolicy"
+                ? "This Google Workspace domain blocks third-party Gmail apps. A domain " +
+                  "administrator has to allow it."
+                : reason === "rateLimitExceeded" || reason === "userRateLimitExceeded"
+                  ? "Gmail is rate-limiting this account. Retry with backoff."
+                  : null,
       });
     }
+
     return (await response.json()) as T;
   }
 }

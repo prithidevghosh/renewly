@@ -1,7 +1,6 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { env } from "../../../env.js";
 import { AppError } from "../../../lib/errors.js";
-import { assertMockAuthAllowed } from "./providers.js";
 import type { OAuthExchange } from "./types.js";
 
 /**
@@ -49,17 +48,22 @@ export function setGoogleKeySet(next: ReturnType<typeof createRemoteJWKSet> | nu
  * Verifies a Google ID token and returns it in the same shape the redirect flow
  * produces, so both paths converge on one account-creation routine.
  *
- * In mock mode the credential is `mock:<subject>:<email>`, matching the
- * convention the redirect mock uses.
+ * The credential is always verified against Google's published keys. There is
+ * no bypass: this path mints a session, and a branch that accepted a formatted
+ * string instead of a signature once returned a valid session for any address
+ * the caller chose to type.
  */
 export async function verifyGoogleIdToken(credential: string): Promise<OAuthExchange> {
   if (env.OAUTH_MODE === "disabled") {
-    throw new AppError("VALIDATION_ERROR", "Google sign-in is turned off on this deployment");
+    throw new AppError(
+      "FEATURE_DISABLED",
+      "Google sign-in is turned off on this deployment. Set OAUTH_MODE=live and " +
+        "configure GOOGLE_CLIENT_ID to enable it.",
+    );
   }
-  if (env.OAUTH_MODE === "mock") return mockExchange(credential);
 
   if (!env.GOOGLE_CLIENT_ID) {
-    throw new AppError("VALIDATION_ERROR", "Google sign-in is not configured", {
+    throw new AppError("FEATURE_DISABLED", "Google sign-in is not configured", {
       missing: "GOOGLE_CLIENT_ID",
     });
   }
@@ -94,30 +98,6 @@ export async function verifyGoogleIdToken(credential: string): Promise<OAuthExch
     },
     // GIS issues no access or refresh token: the ID token is the whole result,
     // and it is a proof of identity, not a key to anything. Nothing to store.
-    tokens: { accessToken: null, refreshToken: null, expiresIn: null, scopes: [] },
-  };
-}
-
-function mockExchange(credential: string): OAuthExchange {
-  // Same door, same lock: this path mints a session from a string, so it must
-  // be unreachable in production regardless of how configuration got here.
-  assertMockAuthAllowed();
-
-  const parts = credential.split(":");
-  if (parts[0] !== "mock") {
-    throw new AppError("UNAUTHORIZED", "That Google credential is not valid");
-  }
-  const subject = parts[1] || "google-subject";
-  const email = parts[2] || "google@example.com";
-
-  return {
-    profile: {
-      providerAccountId: subject,
-      email,
-      emailVerified: true,
-      name: email.split("@")[0] ?? "Mock User",
-      avatarUrl: null,
-    },
     tokens: { accessToken: null, refreshToken: null, expiresIn: null, scopes: [] },
   };
 }

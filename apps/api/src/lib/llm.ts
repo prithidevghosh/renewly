@@ -37,12 +37,53 @@ export const decisionNarrativeSchema = z.object({
 
 export type DecisionNarrative = z.infer<typeof decisionNarrativeSchema>;
 
+/**
+ * What the model is allowed to conclude about an inbound message.
+ *
+ * `intent` is advisory only. The deterministic parser decides what a message
+ * *does*; this decides what we *say* back when the parser could not read the
+ * message at all. Nothing here may move money — see `chatReply`.
+ */
+export const chatReplySchema = z.object({
+  /** Best reading of what the person wants, or "unclear". */
+  intent: z.enum(["approve", "keep", "later", "why", "done", "stop", "help", "smalltalk", "unclear"]),
+  /** The message to send back. One or two short lines, no greeting. */
+  reply: z.string().min(1).max(600),
+});
+
+export type ChatReply = z.infer<typeof chatReplySchema>;
+
+export interface ChatReplyContext {
+  /** Exactly what the person sent. */
+  message: string;
+  /** The proposal in front of them, when one is open. */
+  proposal: {
+    merchant: string;
+    amount: string;
+    currency: string;
+    billingCycle: string;
+    recommendation: string;
+    headline: string;
+    savingsAnnual: string;
+    doNothingAnnual: string;
+    recommendedAnnual: string;
+    /** True when approving this would charge a card. */
+    movesMoney: boolean;
+  } | null;
+  /** Their subscriptions, so "what am I paying for" can be answered. */
+  subscriptions: Array<{ merchant: string; amount: string; currency: string; cycle: string }>;
+  /** The last few turns, oldest first. */
+  history: Array<{ role: "user" | "agent"; text: string }>;
+}
+
 export interface LlmClient {
   readonly available: boolean;
   readonly modelId: string | null;
   /** Returns null when the model is unavailable or the output cannot be parsed. */
   extractRenewalFromText(text: string): Promise<ParsedRenewal | null>;
   explainDecision(context: DecisionExplainContext): Promise<DecisionNarrative | null>;
+  /** Writes the reply for a message the deterministic parser could not read. */
+  chatReply(context: ChatReplyContext): Promise<ChatReply | null>;
 }
 
 export interface DecisionExplainContext {
@@ -144,6 +185,45 @@ const EXTRACT_SYSTEM_PROMPT = [
   "and merchant. Never invent a merchant, price or date.",
 ].join(" ");
 
+const CHAT_REPLY_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["intent", "reply"],
+  properties: {
+    intent: {
+      type: "string",
+      enum: ["approve", "keep", "later", "why", "done", "stop", "help", "smalltalk", "unclear"],
+    },
+    reply: { type: "string" },
+  },
+} as const;
+
+/**
+ * The reply writer. It runs only for messages the deterministic parser could
+ * not read, and it is told plainly that it cannot authorise anything — the
+ * caller enforces that regardless, but a model that believes it can approve
+ * writes confirmations it has no business writing.
+ */
+const CHAT_SYSTEM_PROMPT = [
+  "You are Renewly, replying inside an iMessage thread about someone's software",
+  "subscriptions. Write the way a competent person texts: one or two short lines,",
+  "no greeting, no sign-off, no emoji, no marketing language.",
+  "",
+  "You CANNOT take any action. You cannot approve, cancel, pay, or schedule",
+  "anything. If the person seems to want an action, tell them the exact word to",
+  "reply with — APPROVE, KEEP, LATER, WHY, DONE or STOP — and say nothing that",
+  "sounds like you have already done it. Never write 'done', 'approved',",
+  "'cancelled' or 'paid' about anything you were asked to do in this message.",
+  "",
+  "Use ONLY the numbers given to you. Never invent an amount, a saving, a date, a",
+  "subscription or a vendor. If a figure is not in the context, do not state one.",
+  "If there is no open proposal, say so plainly and offer what you can tell them",
+  "about their subscriptions.",
+  "",
+  "Set intent to your best reading of what they want. Use 'smalltalk' for hello,",
+  "thanks and similar, and 'unclear' when you genuinely cannot tell.",
+].join(" ");
+
 const EXPLAIN_SYSTEM_PROMPT = [
   "You write the human-facing explanation for an already-decided subscription",
   "recommendation. The recommendation and the numbers are given to you and are",
@@ -186,6 +266,16 @@ class OpenAiLlmClient implements LlmClient {
       "decision_narrative",
       NARRATIVE_JSON_SCHEMA,
       EXPLAIN_SYSTEM_PROMPT,
+      JSON.stringify(context),
+    );
+  }
+
+  async chatReply(context: ChatReplyContext): Promise<ChatReply | null> {
+    return this.structured(
+      chatReplySchema,
+      "chat_reply",
+      CHAT_REPLY_JSON_SCHEMA,
+      CHAT_SYSTEM_PROMPT,
       JSON.stringify(context),
     );
   }
@@ -245,6 +335,9 @@ class UnavailableLlmClient implements LlmClient {
     return null;
   }
   async explainDecision(): Promise<DecisionNarrative | null> {
+    return null;
+  }
+  async chatReply(): Promise<ChatReply | null> {
     return null;
   }
 }

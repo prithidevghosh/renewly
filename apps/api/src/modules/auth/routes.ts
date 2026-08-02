@@ -58,7 +58,6 @@ authRoutes.post("/signup", credentialLimiter, async (c) => {
       verificationRequired: true,
       // Mock mail mode only, so a local developer or the test suite can finish a
       // signup without a mail provider. Always null when mail is live.
-      verificationCode: result.verificationCode ?? null,
     },
     201,
   );
@@ -122,15 +121,8 @@ authRoutes.get("/config", (c) =>
       // is configured — no secret, no registered redirect URI.
       // Report only what will actually work, so the client never draws a button
       // that 400s. `disabled` hides them entirely.
-      googleOneTap:
-        env.OAUTH_MODE === "mock" ||
-        (env.OAUTH_MODE === "live" && Boolean(env.GOOGLE_CLIENT_ID)),
-      googleRedirect:
-        env.OAUTH_MODE === "mock" ||
-        (env.OAUTH_MODE === "live" && Boolean(env.GOOGLE_CLIENT_SECRET)),
-      microsoftRedirect:
-        env.OAUTH_MODE === "mock" ||
-        (env.OAUTH_MODE === "live" && Boolean(env.MICROSOFT_CLIENT_SECRET)),
+      googleOneTap: env.OAUTH_MODE === "live" && Boolean(env.GOOGLE_CLIENT_ID),
+      googleRedirect: env.OAUTH_MODE === "live" && Boolean(env.GOOGLE_CLIENT_SECRET),
     },
     oauthMode: env.OAUTH_MODE,
   }),
@@ -156,7 +148,7 @@ authRoutes.post("/google/id-token", credentialLimiter, async (c) => {
 });
 
 /* -------------------------------------------------------------------------- */
-/* OAuth — Google and Microsoft                                               */
+/* OAuth — Google                                                             */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -168,7 +160,7 @@ authRoutes.post("/google/id-token", credentialLimiter, async (c) => {
 const OAUTH_FLOW_COOKIE = "renewly_oauth";
 const OAUTH_FLOW_TTL_SECONDS = 600;
 
-const providerParam = z.enum(["google", "microsoft"]);
+const providerParam = z.enum(["google"]);
 
 interface FlowCookie {
   state: string;

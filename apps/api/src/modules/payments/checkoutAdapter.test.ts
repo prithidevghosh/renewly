@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  MockCheckoutAdapter,
+  
   signBody,
   verifySignature,
   type CheckoutOrder,
 } from "./checkoutAdapter.js";
+import { MockCheckoutAdapter } from "../../test/doubles/checkout.js";
 import type { OneTimeCredentials } from "./pravaClient.js";
 
 function credentials(overrides: Partial<OneTimeCredentials> = {}): OneTimeCredentials {

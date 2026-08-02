@@ -45,7 +45,7 @@ describe("inbound address", () => {
 
     expect(response.status).toBe(200);
     expect(response.body.address).toBe(`renew+${token}@inbound.renewly.app`);
-    expect(response.body.mode).toBe("mock");
+    expect(response.body.mode).toBe("disabled");
   });
 });
 

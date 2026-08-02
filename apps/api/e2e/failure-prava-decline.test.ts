@@ -1,8 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { approvalRequests, transactions } from "../src/db/schema.js";
 import { setPravaClient } from "../src/modules/payments/factory.js";
-import { MockPravaClient } from "../src/modules/payments/pravaMock.js";
+import { MockPravaClient } from "../src/test/doubles/prava.js";
 import {
   createDecisionAndNotify,
   createSubscription,
@@ -11,6 +11,8 @@ import {
   signUpWithChannel,
 } from "../src/test/factories.js";
 import { ApiClient, createHarness, expectErrorCode, type TestHarness } from "../src/test/helpers.js";
+import { setCheckoutAdapter } from "../src/modules/payments/checkoutAdapter.js";
+import { MockCheckoutAdapter } from "../src/test/doubles/checkout.js";
 
 /**
  * Everything that can go wrong once money is in motion. The bar for each: the
@@ -40,6 +42,9 @@ async function proposeAndApprove(client: ApiClient, handle: string, merchantName
 }
 
 beforeAll(async () => {
+  // Declines are produced by installing an adapter that declines, not by a flag
+  // on the request — the payment service no longer reaches for a mock of its
+  // own. Each describe below installs whichever it needs.
   harness = await createHarness();
 });
 
@@ -49,13 +54,20 @@ afterAll(async () => {
 });
 
 describe("card declined", () => {
+  beforeEach(() => {
+    setCheckoutAdapter(new MockCheckoutAdapter({ forceDecline: true }));
+  });
+
+  afterEach(() => {
+    setCheckoutAdapter(new MockCheckoutAdapter());
+  });
+
+
   it("tells the user nothing was charged and offers a retry", async () => {
     const { client, handle } = await freshWorkspace(`decline-${Date.now()}@test.com`);
     const { approval } = await proposeAndApprove(client, handle, "Penpot");
 
-    const response = await client.post(`/v1/approvals/${approval.id}/prava/complete`, {
-      forceDecline: true,
-    });
+    const response = await client.post(`/v1/approvals/${approval.id}/prava/complete`, {});
 
     expect(response.status).toBe(402);
     expect(expectErrorCode(response.body)).toBe("CHECKOUT_DECLINED");
@@ -71,7 +83,7 @@ describe("card declined", () => {
     const { client, handle } = await freshWorkspace(`decline2-${Date.now()}@test.com`);
     const { approval } = await proposeAndApprove(client, handle, "Netlify Pro");
 
-    await client.post(`/v1/approvals/${approval.id}/prava/complete`, { forceDecline: true });
+    await client.post(`/v1/approvals/${approval.id}/prava/complete`, {});
 
     const refreshed = await client.get<{
       approval: { state: string; failureCode: string; resultPayload: Record<string, unknown> };
@@ -86,7 +98,7 @@ describe("card declined", () => {
     const { client, handle } = await freshWorkspace(`decline3-${Date.now()}@test.com`);
     const { approval } = await proposeAndApprove(client, handle, "Vercel Pro");
 
-    await client.post(`/v1/approvals/${approval.id}/prava/complete`, { forceDecline: true });
+    await client.post(`/v1/approvals/${approval.id}/prava/complete`, {});
 
     const [row] = await harness.handle.db
       .select()
@@ -119,7 +131,7 @@ describe("card declined", () => {
       `/v1/payment-sessions/${detail.body.approval.pravaPaymentSessionId}`,
     );
 
-    await client.post(`/v1/approvals/${approval.id}/prava/complete`, { forceDecline: true });
+    await client.post(`/v1/approvals/${approval.id}/prava/complete`, {});
 
     expect(harness.prava.inspect(session.body.paymentSession.pravaSessionId)?.reported).toBe(
       "DECLINED",
@@ -130,7 +142,7 @@ describe("card declined", () => {
     const { client, handle } = await freshWorkspace(`decline5-${Date.now()}@test.com`);
     const { approval } = await proposeAndApprove(client, handle, "Canva");
 
-    await client.post(`/v1/approvals/${approval.id}/prava/complete`, { forceDecline: true });
+    await client.post(`/v1/approvals/${approval.id}/prava/complete`, {});
 
     const summary = await client.get<{ realizedTotal: string }>("/v1/savings/summary");
     expect(summary.body.realizedTotal).toBe("0.00");
@@ -138,6 +150,15 @@ describe("card declined", () => {
 });
 
 describe("declined by the reserved BIN", () => {
+  beforeEach(() => {
+    setCheckoutAdapter(new MockCheckoutAdapter({ forceDecline: true }));
+  });
+
+  afterEach(() => {
+    setCheckoutAdapter(new MockCheckoutAdapter());
+  });
+
+
   it("fails the same way when the rail issues a bad credential", async () => {
     setPravaClient(new MockPravaClient({ failureMode: "decline" }));
     const { client, handle } = await freshWorkspace(`bin-${Date.now()}@test.com`);
@@ -239,7 +260,10 @@ describe("recovery", () => {
     const { client, handle } = await freshWorkspace(`recover-${Date.now()}@test.com`);
     const { subscription, approval } = await proposeAndApprove(client, handle, "Github Team");
 
-    await client.post(`/v1/approvals/${approval.id}/prava/complete`, { forceDecline: true });
+    // The first charge declines; the retry below must be allowed to settle, so
+    // the adapter is swapped between the two rather than fixed for the file.
+    setCheckoutAdapter(new MockCheckoutAdapter({ forceDecline: true }));
+    await client.post(`/v1/approvals/${approval.id}/prava/complete`, {});
 
     // The same approval cannot be replayed.
     const again = await client.post(`/v1/approvals/${approval.id}/prava/complete`);
@@ -247,6 +271,7 @@ describe("recovery", () => {
     expect(expectErrorCode(again.body)).toBe("INVALID_STATE_TRANSITION");
 
     // A regenerated decision produces a new approval, and that one can succeed.
+    setCheckoutAdapter(new MockCheckoutAdapter());
     const retry = await createDecisionAndNotify(client, subscription.id);
     await harness.flushOutbox();
     expect(retry.approval.id).not.toBe(approval.id);

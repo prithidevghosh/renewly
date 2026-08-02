@@ -1,10 +1,10 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { isTest } from "../../env.js";
 import { AppError } from "../../lib/errors.js";
 import { decimalString, paginationSchema, readJson, readQuery } from "../../lib/http.js";
 import { requireAuth } from "../../middleware/auth.js";
-import type { AppEnv } from "../../types/context.js";
+import type { AppEnv, AuthContext } from "../../types/context.js";
 import { confirmAttestedAction, startAttestedAction } from "../actions/attestedActions.js";
 import { getThread } from "../conversations/service.js";
 import { handleInbound, notifyApproval } from "../conversations/runtime.js";
@@ -12,6 +12,7 @@ import { executeApproval } from "../payments/executor.js";
 import { serializeSubscription } from "../subscriptions/service.js";
 import {
   assertNotExpired,
+  authorizeByPayToken,
   listApprovals,
   loadApprovalContext,
   serializeApproval,
@@ -142,6 +143,20 @@ approvalRoutes.get("/:id/pay-bootstrap", async (c) => {
     }
   }
 
+  return respondPayBootstrap(c, auth, c.req.param("id"));
+});
+
+approvalRoutes.post("/:id/prava/complete", async (c) => {
+  return respondPravaComplete(c, c.get("auth"), c.req.param("id"));
+});
+
+async function respondPayBootstrap(
+  c: Context<AppEnv>,
+  auth: AuthContext,
+  approvalId: string,
+): Promise<Response> {
+  const context = await loadApprovalContext(auth.workspace.id, approvalId);
+
   assertNotExpired(context.approval);
 
   if (!context.approval.pravaPaymentSessionId) {
@@ -164,10 +179,13 @@ approvalRoutes.get("/:id/pay-bootstrap", async (c) => {
     merchantName: session.merchantName,
     expiresAt: context.approval.expiresAt.toISOString(),
   });
-});
+}
 
-approvalRoutes.post("/:id/prava/complete", async (c) => {
-  const auth = c.get("auth");
+async function respondPravaComplete(
+  c: Context<AppEnv>,
+  auth: AuthContext,
+  approvalId: string,
+): Promise<Response> {
   const body = await readJson(
     c,
     z.object({ forceDecline: z.boolean().optional() }).default({}),
@@ -175,17 +193,45 @@ approvalRoutes.post("/:id/prava/complete", async (c) => {
 
   const result = await executeApproval({
     auth,
-    approvalId: c.req.param("id"),
+    approvalId,
     ...(body.forceDecline && isTest() ? { forceDecline: true } : {}),
   });
 
-  const context = await loadApprovalContext(auth.workspace.id, c.req.param("id"));
+  const context = await loadApprovalContext(auth.workspace.id, approvalId);
   return c.json({
     approval: serializeApproval(context.approval),
     transactionId: result.transactionId,
     receiptId: result.receiptId,
     executed: result.executed,
   });
+}
+
+/**
+ * The unauthenticated pay-link surface. The texted link is opened on whatever
+ * device received it — no cookie, no bearer token — so these two routes accept
+ * the single-use token as the whole credential.
+ *
+ * Mounted at the same prefix as `approvalRoutes`, but registered first: a
+ * request carrying a token is handled here, and one without falls through via
+ * `next()` to the session-authenticated router (which is how the dashboard,
+ * already signed in, keeps calling the same paths without a token).
+ */
+export const payLinkRoutes = new Hono<AppEnv>();
+
+payLinkRoutes.get("/:id/pay-bootstrap", async (c, next) => {
+  const token = c.req.query("token");
+  if (!token) return next();
+
+  const { auth } = await authorizeByPayToken(c.req.param("id"), token);
+  return respondPayBootstrap(c, auth, c.req.param("id"));
+});
+
+payLinkRoutes.post("/:id/prava/complete", async (c, next) => {
+  const token = c.req.query("token");
+  if (!token) return next();
+
+  const { auth } = await authorizeByPayToken(c.req.param("id"), token);
+  return respondPravaComplete(c, auth, c.req.param("id"));
 });
 
 /** Starts an attested action and returns the checklist. */

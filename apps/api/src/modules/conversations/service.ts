@@ -153,16 +153,61 @@ export async function ensureThread(
   },
   db: Database = getDb(),
 ): Promise<ConversationThread> {
-  const [existing] = await db
+  // Scoped to the workspace: placeholder ids are derived from the participant's
+  // phone number, so the same number in two workspaces would otherwise resolve
+  // to whichever thread was created first — one workspace reading another's.
+  const [byThreadId] = await db
     .select()
     .from(conversationThreads)
     .where(
       and(
+        eq(conversationThreads.workspaceId, input.workspaceId),
         eq(conversationThreads.channel, input.channel),
         eq(conversationThreads.channelThreadId, input.channelThreadId),
       ),
     );
-  if (existing) return existing;
+  if (byThreadId) return byThreadId;
+
+  /*
+   * One person on one channel is one conversation, whatever the provider calls
+   * it. We open a thread before the provider has told us its id — the proposal
+   * has to be addressed to something — so outbound starts on the placeholder
+   * below and the reply comes back carrying Linq's real chat id. Matching only
+   * on that id produced two rows for the same conversation, and since approvals
+   * hang off the outbound one, every reply looked like it had arrived with no
+   * proposal open: "There is nothing waiting for approval right now."
+   */
+  const candidates = await db
+    .select()
+    .from(conversationThreads)
+    .where(
+      and(
+        eq(conversationThreads.workspaceId, input.workspaceId),
+        eq(conversationThreads.channel, input.channel),
+        eq(conversationThreads.participantExternalId, input.participantExternalId),
+      ),
+    )
+    .orderBy(desc(conversationThreads.id));
+
+  // Rows split before this function knew to look by participant, so a real
+  // conversation can already have two. Prefer the one the provider knows about,
+  // then the newest — anything is better than picking arbitrarily each call.
+  const byParticipant =
+    candidates.find((row) => !isPlaceholderThreadId(row.channelThreadId)) ?? candidates[0];
+
+  if (byParticipant) {
+    // Trade a placeholder for the provider's own id the moment we learn it, so
+    // later sends can continue the chat instead of starting a new one.
+    if (isPlaceholderThreadId(byParticipant.channelThreadId) && !isPlaceholderThreadId(input.channelThreadId)) {
+      const [updated] = await db
+        .update(conversationThreads)
+        .set({ channelThreadId: input.channelThreadId, updatedAt: new Date() })
+        .where(eq(conversationThreads.id, byParticipant.id))
+        .returning();
+      return updated ?? byParticipant;
+    }
+    return byParticipant;
+  }
 
   const [row] = await db
     .insert(conversationThreads)
@@ -176,6 +221,27 @@ export async function ensureThread(
     .returning();
   if (!row) throw new Error("thread insert returned no row");
   return row;
+}
+
+/** Ids we minted ourselves before the provider gave us one of its own. */
+export function isPlaceholderThreadId(value: string): boolean {
+  return /^(linq|wa|sim)_thread_/.test(value);
+}
+
+/**
+ * The id a thread carries until the provider tells us its own.
+ *
+ * The workspace is in the string because the unique index on
+ * (channel, channel_thread_id) is global, while a phone number is not: two
+ * workspaces messaging the same person would otherwise collide on insert.
+ */
+export function placeholderThreadId(
+  workspaceId: string,
+  channel: ChannelName,
+  participantExternalId: string,
+): string {
+  const prefix = channel === "imessage" ? "linq" : channel === "whatsapp" ? "wa" : "sim";
+  return `${prefix}_thread_${workspaceId}_${participantExternalId}`;
 }
 
 export async function getThread(

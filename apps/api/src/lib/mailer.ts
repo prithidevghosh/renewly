@@ -7,10 +7,14 @@ import { logger } from "./logger.js";
 /**
  * Outbound transactional mail.
  *
- * Same shape as the chat channel adapters: `mock` is the default and needs no
- * key, `live` talks to Resend over plain fetch. Mock does not discard the
- * message — it keeps it in a small in-memory mailbox so dev and tests can read
- * back exactly what would have been sent.
+ * `live` talks to Resend over plain fetch; `disabled` refuses. There is no
+ * capture-it-locally mode: a verification code that is silently swallowed still
+ * reports the signup as successful, and the person waiting for the code has no
+ * way to tell that from a slow inbox.
+ *
+ * Tests install a transport through setMailTransport, which is an argument
+ * rather than a deployment mode — visible at the call site, unreachable from a
+ * running app.
  *
  * https://resend.com/docs/api-reference/emails/send-email
  */
@@ -24,9 +28,9 @@ export interface OutboundEmail {
 }
 
 export interface SendEmailResult {
-  /** Provider message id in live mode, a local id in mock mode. */
+  /** Provider message id from Resend, or a local id from a test transport. */
   id: string;
-  mode: "mock" | "live";
+  mode: "live" | "transport";
 }
 
 export interface SentEmail extends OutboundEmail {
@@ -38,25 +42,11 @@ export interface SentEmail extends OutboundEmail {
 export type MailTransport = (email: OutboundEmail) => Promise<SendEmailResult>;
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
-/** The mailbox is a debugging aid, not a store; it must not grow unbounded. */
-const MAILBOX_LIMIT = 100;
-
-const mailbox: SentEmail[] = [];
-
 let transport: MailTransport | null = null;
 
 /** Tests and the dev harness substitute a transport here. */
 export function setMailTransport(next: MailTransport | null): void {
   transport = next;
-}
-
-/** Newest last, so a test can read `at(-1)`. */
-export function readMailbox(): readonly SentEmail[] {
-  return mailbox;
-}
-
-export function clearMailbox(): void {
-  mailbox.length = 0;
 }
 
 export async function sendEmail(
@@ -77,7 +67,14 @@ export async function sendEmail(
   );
 
   if (transport) return transport(email);
-  if (env.MAIL_OUTBOUND_MODE === "mock") return sendMock(email, log);
+  if (env.MAIL_OUTBOUND_MODE === "disabled") {
+    throw new AppError(
+      "FEATURE_DISABLED",
+      "Outbound mail is turned off on this deployment, so this message was not " +
+        "sent. Set MAIL_OUTBOUND_MODE=live and supply MAIL_OUTBOUND_API_KEY.",
+      { to: email.to, subject: email.subject },
+    );
+  }
   return sendViaResend(email, envConfig(), log);
 }
 
@@ -95,22 +92,6 @@ function envConfig(): ResendConfig {
     replyTo: env.MAIL_REPLY_TO,
   };
 }
-
-function sendMock(email: OutboundEmail, log: Logger = logger): SendEmailResult {
-  const id = newId("eml");
-  mailbox.push({ ...email, id, from: env.MAIL_FROM, sentAt: new Date() });
-  if (mailbox.length > MAILBOX_LIMIT) mailbox.splice(0, mailbox.length - MAILBOX_LIMIT);
-
-  log.info(
-    { to: email.to, subject: email.subject, id, mailboxSize: mailbox.length },
-    "mail captured — MAIL_OUTBOUND_MODE=mock, nothing left the process",
-  );
-  // The rendered bodies only at debug: they are long, and a transactional mail
-  // can carry a link that grants access.
-  log.debug({ id, text: email.text }, "mail body (mock)");
-  return { id, mode: "mock" };
-}
-
 interface ResendResponse {
   id?: string;
   message?: string;

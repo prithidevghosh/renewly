@@ -22,6 +22,13 @@ sample
 # Working notes on product and design decisions. Local only.
 memory
 
+# Agent sessions and their worktrees — each one is a full checkout copy.
+.claude
+
+# Scratch: generated imagery and one-off scripts kept out of the history.
+output
+tmp
+
 .DS_Store
 *.log
 npm-debug.log*

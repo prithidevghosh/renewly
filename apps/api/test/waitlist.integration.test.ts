@@ -4,6 +4,7 @@ import { waitlistEntries } from "../src/db/schema.js";
 import { env } from "../src/env.js";
 import { setMailTransport, type OutboundEmail } from "../src/lib/mailer.js";
 import { ApiClient, createHarness, expectErrorCode, type TestHarness } from "../src/test/helpers.js";
+import { captureTransport } from "../src/test/doubles/mailer.js";
 
 let harness: TestHarness;
 let client: ApiClient;
@@ -31,7 +32,7 @@ describe("waitlist", () => {
   it("runs against the mock mailer, never a real provider", () => {
     // If this ever reads "live", the suite is one bug away from mailing
     // strangers from a developer's .env. See src/test/setup.ts.
-    expect(env.MAIL_OUTBOUND_MODE).toBe("mock");
+    expect(env.MAIL_OUTBOUND_MODE).toBe("disabled");
     expect(env.MAIL_OUTBOUND_API_KEY).toBeUndefined();
   });
 
@@ -128,7 +129,7 @@ describe("waitlist", () => {
     setMailTransport(async (email) => {
       if (email.to === env.WAITLIST_NOTIFY_TO) throw new Error("provider is down");
       delivered.push(email);
-      return { id: "stub", mode: "mock" };
+      return { id: "stub", mode: "transport" as const };
     });
 
     const failed = await client.post("/v1/waitlist", { email: "grace@example.com" });
@@ -149,7 +150,7 @@ describe("waitlist", () => {
   });
 
   it("resumes the loop on retry rather than repeating it", async () => {
-    setMailTransport(null);
+    setMailTransport(captureTransport());
     const before = harness.mailbox().length;
 
     const retried = await client.post<WaitlistBody>("/v1/waitlist", { email: "grace@example.com" });

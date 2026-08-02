@@ -3,12 +3,18 @@ import { createApp } from "../app.js";
 import { createDatabase, setDatabaseHandle, type DatabaseHandle } from "../db/client.js";
 import { runMigrations } from "../db/migrate.js";
 import { setLlmClient } from "../lib/llm.js";
-import { clearMailbox, readMailbox, setMailTransport, type SentEmail } from "../lib/mailer.js";
+import { setMailTransport, type SentEmail } from "../lib/mailer.js";
 import { resetChannelAdapters } from "../modules/channels/registry.js";
 import { seedMerchants } from "../modules/merchants/service.js";
-import { setCheckoutAdapter } from "../modules/payments/checkoutAdapter.js";
+import { setCheckoutAdapter, type CheckoutAdapter } from "../modules/payments/checkoutAdapter.js";
+import { MockCheckoutAdapter } from "./doubles/checkout.js";
 import { setPravaClient } from "../modules/payments/factory.js";
-import { MockPravaClient } from "../modules/payments/pravaMock.js";
+import { MockPravaClient } from "./doubles/prava.js";
+import { captureTransport, clearMailbox, readMailbox } from "./doubles/mailer.js";
+import { installMockMailbox } from "./doubles/mailbox.js";
+import { installMockOAuth } from "./doubles/oauth.js";
+import { SimulatorChannelAdapter } from "./doubles/simulatorChannel.js";
+import { setChannelAdapter } from "../modules/channels/registry.js";
 import { drainOutbox, expireApprovals, runTick } from "../modules/workers/runner.js";
 import type { AppEnv } from "../types/context.js";
 
@@ -35,7 +41,7 @@ export interface TestHarness {
  * so message delivery is deterministic rather than time-dependent.
  */
 export async function createHarness(
-  options: { prava?: MockPravaClient } = {},
+  options: { prava?: MockPravaClient; checkout?: CheckoutAdapter } = {},
 ): Promise<TestHarness> {
   const handle = createDatabase("pglite://memory");
   setDatabaseHandle(handle);
@@ -44,10 +50,15 @@ export async function createHarness(
 
   const prava = options.prava ?? new MockPravaClient();
   setPravaClient(prava);
-  setCheckoutAdapter(null);
+  setCheckoutAdapter(options.checkout ?? new MockCheckoutAdapter());
   setLlmClient(null);
   resetChannelAdapters();
-  setMailTransport(null);
+  // The application has no mock adapters left, so a test installs the doubles it
+  // needs explicitly. Everything below is unreachable outside NODE_ENV=test.
+  setChannelAdapter("simulator", new SimulatorChannelAdapter());
+  installMockMailbox();
+  installMockOAuth();
+  setMailTransport(captureTransport());
   clearMailbox();
 
   const app = createApp();

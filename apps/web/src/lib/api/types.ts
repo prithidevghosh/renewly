@@ -54,6 +54,7 @@ export interface MeResponse {
 
 export interface MailboxConnection {
   id: string;
+  /** Gmail is the only supported mailbox; "outlook" may appear on older rows. */
   provider: "gmail" | "outlook";
   emailAddress: string;
   status: "pending" | "active" | "revoked" | "error";

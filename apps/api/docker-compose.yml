@@ -7,8 +7,11 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: renewly
+    # 5432 is the conventional port and is often already taken by another
+    # project's container, so publish on 5433 and leave the default free.
+    # Bound to loopback: this database has no password worth the name.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - renewly-pgdata:/var/lib/postgresql/data
     healthcheck:

@@ -5,12 +5,12 @@ import type { AuthProvider } from "../../../db/schema.js";
  *
  * Same shape as every other outbound integration in this codebase: an interface,
  * a live implementation written against the vendor's published reference, and a
- * mock that is the default. The mock is not a stub — it drives the identical
  * code path through account creation and linking, so the flow is exercised by
  * the test suite without anyone holding a Google credential.
  */
 
-export type SocialProvider = Extract<AuthProvider, "google" | "microsoft">;
+/** Microsoft was removed as a sign-in provider; the enum value survives for existing rows. */
+export type SocialProvider = Extract<AuthProvider, "google">;
 
 export interface OAuthProfile {
   /** The provider's stable subject id. Never the email — people change those. */
@@ -51,7 +51,7 @@ export interface ExchangeInput {
 
 export interface OAuthClient {
   readonly provider: SocialProvider;
-  readonly mode: "mock" | "live";
+  readonly mode: "live" | "mock";
   /** Where to send the browser. */
   authorizeUrl(input: AuthorizeInput): string;
   /** Trade the callback code for tokens and the user's profile. */
@@ -65,5 +65,4 @@ export interface OAuthClient {
  */
 export const LOGIN_SCOPES: Record<SocialProvider, string[]> = {
   google: ["openid", "email", "profile"],
-  microsoft: ["openid", "email", "profile", "offline_access", "User.Read"],
 };

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDecision, createSubscription, fixture, signUp } from "../src/test/factories.js";
 import { ApiClient, createHarness, expectErrorCode, textFile, type TestHarness } from "../src/test/helpers.js";
 import { setPravaClient } from "../src/modules/payments/factory.js";
-import { MockPravaClient } from "../src/modules/payments/pravaMock.js";
+import { MockPravaClient } from "../src/test/doubles/prava.js";
 
 /**
  * Every way the flow can fail, exercised end to end: a rail that refuses the

@@ -1,4 +1,4 @@
-import { newId } from "../../../lib/id.js";
+import { newId } from "../../lib/id.js";
 import type {
   ChannelAdapter,
   InboundMessage,
@@ -6,7 +6,8 @@ import type {
   SendResult,
   SendTextInput,
   VerifyInput,
-} from "../types.js";
+} from "../../modules/channels/types.js";
+import { assertTestOnly } from "./guard.js";
 
 /**
  * A channel that exists only inside this process and the database. It is what
@@ -14,14 +15,22 @@ import type {
  * phone number, an API key or an external service — the e2e suite drives the
  * real runtime through this adapter.
  *
- * It is available in every environment on purpose: it is also the fastest way
- * for an operator to demo the loop.
+ * It was previously available in every environment, on the argument that it was
+ * the fastest way to demo the loop. That is exactly the problem: an approval
+ * "delivered" here reached nobody, and the thread it appeared in was
+ * indistinguishable from a real conversation. A demo that shows a message
+ * arriving on a phone that never rang is a claim about the product that is not
+ * true. It is a test instrument now, and only a test may install it.
  */
 export class SimulatorChannelAdapter implements ChannelAdapter {
   readonly channel = "simulator" as const;
-  readonly mode = "mock" as const;
+  readonly mode = "simulator" as const;
 
   private counter = 0;
+
+  constructor() {
+    assertTestOnly("SimulatorChannelAdapter");
+  }
 
   private nextId(): string {
     this.counter += 1;

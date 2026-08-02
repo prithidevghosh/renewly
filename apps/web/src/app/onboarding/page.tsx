@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState, type FormEvent } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -16,7 +16,7 @@ import {
 import { Artwork } from "@/components/site/Artwork";
 import { Wordmark } from "@/components/brand/Mark";
 import { apiFetch, mailboxConnectUrl, oauthUrl, RenewlyApiError } from "@/lib/api/client";
-import type { MeResponse, PublicUser } from "@/lib/api/types";
+import type { MailboxConnection, MeResponse, PublicUser } from "@/lib/api/types";
 import styles from "./onboarding.module.css";
 
 type Stage = "account" | "verify" | "mandate";
@@ -33,7 +33,6 @@ interface AuthConfig {
   providers: {
     password: boolean;
     googleRedirect: boolean;
-    microsoftRedirect: boolean;
   };
 }
 
@@ -52,44 +51,84 @@ function OnboardingContent() {
   const [stage, setStage] = useState<Stage>("account");
   const [mode, setMode] = useState<AuthMode>(search.get("mode") === "login" ? "login" : "signup");
   const [providers, setProviders] = useState<AuthConfig["providers"] | null>(null);
+  const [authConfigReady, setAuthConfigReady] = useState(false);
+  const [existingSession, setExistingSession] = useState<MeResponse | null>(null);
   const [email, setEmail] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [devCode, setDevCode] = useState<string | null>(null);
+  const [authVerified, setAuthVerified] = useState(false);
+  const [mailboxes, setMailboxes] = useState<MailboxConnection[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(
     search.get("error") === "access_denied" ? "Sign-in was cancelled. Nothing changed." : null,
   );
   const [notice, setNotice] = useState<string | null>(null);
-  const [settings, setSettings] = useState({ budget: "200.00", ceiling: "50.00", teamSize: "1" });
+  const [settings, setSettings] = useState({ budget: "", ceiling: "", teamSize: "1" });
+
+  const activeMailbox = mailboxes.find((mailbox) => mailbox.status === "active") ?? null;
+
+  const hydrateVerifiedSession = useCallback(async (advance: boolean) => {
+    const me = await apiFetch<MeResponse>("/v1/me");
+    setExistingSession(me);
+    setEmail(me.user.email);
+
+    if (!me.user.emailVerified) {
+      setAuthVerified(false);
+      setMailboxes([]);
+      if (advance) setStage("verify");
+      return { me, connections: [] as MailboxConnection[] };
+    }
+
+    // Do not trust an OAuth callback or a previous client state. Both the
+    // verified session and the mailbox grant are read back from the API.
+    const mailboxResponse = await apiFetch<{ connections: MailboxConnection[] }>("/v1/mailbox");
+    setAuthVerified(true);
+    setMailboxes(mailboxResponse.connections);
+    setSettings({
+      budget: me.settings.aiMonthlyBudget ?? "",
+      ceiling: me.settings.spendCeiling ?? "",
+      teamSize: String(me.settings.teamSize),
+    });
+    if (advance) setStage("mandate");
+    return { me, connections: mailboxResponse.connections };
+  }, []);
 
   useEffect(() => {
-    void apiFetch<AuthConfig>("/v1/auth/config")
-      .then((value) => setProviders(value.providers))
-      .catch(() => null);
+    const resumeFromCallback = search.get("auth") === "complete" || search.has("mailbox");
 
-    void apiFetch<MeResponse>("/v1/me")
-      .then((me) => {
-        setEmail(me.user.email);
-        if (me.user.emailVerified) {
-          setSettings({
-            budget: me.settings.aiMonthlyBudget ?? "200.00",
-            ceiling: me.settings.spendCeiling ?? "50.00",
-            teamSize: String(me.settings.teamSize),
-          });
-          setStage("mandate");
-        } else {
-          setStage("verify");
+    void (async () => {
+      try {
+        const config = await apiFetch<AuthConfig>("/v1/auth/config");
+        setProviders(config.providers);
+        setAuthConfigReady(true);
+
+        try {
+          // A normal reload intentionally stays on step one. We inspect the
+          // session so it can be resumed explicitly, but never restore a UI
+          // step from client state. OAuth/mailbox callbacks are the exception.
+          await hydrateVerifiedSession(resumeFromCallback);
+          // Callback markers are single-use. Removing them means a browser
+          // reload always re-enters at the account step instead of replaying
+          // a previously completed OAuth/mailbox transition.
+          if (resumeFromCallback) router.replace("/onboarding");
+        } catch (caught) {
+          if (caught instanceof RenewlyApiError && caught.code === "UNAUTHORIZED") return;
+          throw caught;
         }
-      })
-      .catch(() => null);
-  }, []);
+      } catch (caught) {
+        setAuthConfigReady(false);
+        setAuthVerified(false);
+        setError(fieldError(caught));
+      }
+    })();
+  }, [hydrateVerifiedSession, router, search]);
 
   useEffect(() => {
     const connected = search.get("mailbox");
     const address = search.get("address");
     if (connected === "connected") setNotice(`${address ?? "Mailbox"} is now connected read-only.`);
     if (search.get("mailbox_error"))
-      setNotice("Mailbox access was declined. You can connect it later.");
+      setNotice("Mailbox access was declined. Connect Gmail to continue.");
   }, [search]);
 
   const progress = useMemo(() => ({ account: 1, verify: 2, mandate: 3 })[stage], [stage]);
@@ -97,6 +136,10 @@ function OnboardingContent() {
   async function submitAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
+    if (!authConfigReady) {
+      setError("Authentication is unavailable because the backend configuration did not load.");
+      return;
+    }
     const data = new FormData(event.currentTarget);
     const nextEmail = String(data.get("email") ?? "").trim();
     setBusy(true);
@@ -108,7 +151,11 @@ function OnboardingContent() {
           body: JSON.stringify({ email: nextEmail, password: String(data.get("password") ?? "") }),
         });
         setEmail(nextEmail);
-        setStage(response.user.emailVerified ? "mandate" : "verify");
+        if (response.user.emailVerified) await hydrateVerifiedSession(true);
+        else {
+          await hydrateVerifiedSession(false);
+          setStage("verify");
+        }
       } else {
         const response = await apiFetch<AuthResponse>("/v1/auth/signup", {
           method: "POST",
@@ -121,6 +168,7 @@ function OnboardingContent() {
         });
         setEmail(nextEmail);
         setDevCode(response.verificationCode ?? null);
+        await hydrateVerifiedSession(false);
         setStage("verify");
       }
     } catch (caught) {
@@ -137,13 +185,7 @@ function OnboardingContent() {
     setError(null);
     try {
       await apiFetch("/v1/auth/verify", { method: "POST", body: JSON.stringify({ email, code }) });
-      const me = await apiFetch<MeResponse>("/v1/me");
-      setSettings({
-        budget: me.settings.aiMonthlyBudget ?? "200.00",
-        ceiling: me.settings.spendCeiling ?? "50.00",
-        teamSize: String(me.settings.teamSize),
-      });
-      setStage("mandate");
+      await hydrateVerifiedSession(true);
     } catch (caught) {
       const attempts = caught instanceof RenewlyApiError ? caught.details?.attemptsRemaining : null;
       setError(
@@ -178,6 +220,21 @@ function OnboardingContent() {
     setBusy(true);
     setError(null);
     try {
+      // Re-check both gates at the commit boundary. This prevents stale state,
+      // a forged callback query, or a mailbox revoked in another tab from
+      // opening the product.
+      const fresh = await hydrateVerifiedSession(true);
+      if (!fresh.me.user.emailVerified) {
+        throw new RenewlyApiError(403, {
+          error: { code: "EMAIL_NOT_VERIFIED", message: "Verify your email before continuing." },
+        });
+      }
+      const connected = fresh.connections.some((mailbox) => mailbox.status === "active");
+      if (!connected) {
+        setError("Connect Gmail before entering the control room.");
+        return;
+      }
+
       await apiFetch("/v1/settings", {
         method: "PATCH",
         body: JSON.stringify({
@@ -196,10 +253,62 @@ function OnboardingContent() {
       }
       router.push("/agent");
     } catch (caught) {
+      if (
+        caught instanceof RenewlyApiError &&
+        (caught.code === "UNAUTHORIZED" || caught.code === "EMAIL_NOT_VERIFIED")
+      ) {
+        setAuthVerified(false);
+        setMailboxes([]);
+        setStage(caught.code === "EMAIL_NOT_VERIFIED" ? "verify" : "account");
+        if (caught.code === "UNAUTHORIZED") setMode("login");
+      }
       setError(fieldError(caught));
     } finally {
       setBusy(false);
     }
+  }
+
+  async function continueExistingSession() {
+    if (!authConfigReady || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await hydrateVerifiedSession(true);
+    } catch (caught) {
+      setError(fieldError(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restartOnboarding() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await apiFetch("/v1/auth/logout", { method: "POST" });
+      setExistingSession(null);
+      setAuthVerified(false);
+      setMailboxes([]);
+      setEmail("");
+      setDevCode(null);
+      setNotice(null);
+      setSettings({ budget: "", ceiling: "", teamSize: "1" });
+      setMode("signup");
+      setStage("account");
+      router.replace("/onboarding");
+    } catch (caught) {
+      setError(fieldError(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function returnToAccount() {
+    setError(null);
+    setNotice(null);
+    setStage("account");
+    router.replace("/onboarding");
   }
 
   return (
@@ -239,10 +348,22 @@ function OnboardingContent() {
           {stage === "account" && (
             <div className={styles.stage}>
               <p className={styles.eyebrow}>
-                {mode === "signup" ? "Begin with your mandate" : "Welcome back"}
+                {existingSession
+                  ? "Workspace identity"
+                  : mode === "signup"
+                    ? "Begin with your mandate"
+                    : "Welcome back"}
               </p>
               <h1>
-                {mode === "signup" ? (
+                {existingSession ? (
+                  <>
+                    Your account is
+                    <br />
+                    <em>
+                      {existingSession.user.emailVerified ? "verified." : "waiting for proof."}
+                    </em>
+                  </>
+                ) : mode === "signup" ? (
                   <>
                     Own your spend.
                     <br />
@@ -257,110 +378,169 @@ function OnboardingContent() {
                 )}
               </h1>
               <p className={styles.lede}>
-                {mode === "signup"
-                  ? "Create the workspace that will hold your recurring commitments, rules, and proof."
-                  : "Sign in to resume your agent and its finance-grade memory."}
+                {existingSession
+                  ? `Signed in as ${existingSession.user.email}. Continue deliberately, or sign out and begin again.`
+                  : mode === "signup"
+                    ? "Create the workspace that will hold your recurring commitments, rules, and proof."
+                    : "Sign in to resume your agent and its finance-grade memory."}
               </p>
 
-              {(providers?.googleRedirect || providers?.microsoftRedirect) && (
-                <div className={styles.socials}>
-                  {providers.googleRedirect && (
-                    <a href={oauthUrl("google")}>
-                      <span className={styles.google}>G</span> Continue with Google
-                    </a>
+              {existingSession ? (
+                <div className={styles.sessionCard}>
+                  <div>
+                    <span>{existingSession.workspace.name}</span>
+                    <strong>{existingSession.user.name}</strong>
+                    <small>
+                      {existingSession.user.emailVerified
+                        ? activeMailbox
+                          ? `${activeMailbox.emailAddress} connected`
+                          : "Verified · mailbox still required"
+                        : "Email verification incomplete"}
+                    </small>
+                  </div>
+                  {error && (
+                    <p className={styles.error} role="alert">
+                      {error}
+                    </p>
                   )}
-                  {providers.microsoftRedirect && (
-                    <a href={oauthUrl("microsoft")}>
-                      <span className={styles.microsoft}>⊞</span> Continue with Microsoft
-                    </a>
-                  )}
+                  <button
+                    className={styles.primary}
+                    onClick={() => void continueExistingSession()}
+                    disabled={busy || !authConfigReady}
+                  >
+                    {busy
+                      ? "Checking your access…"
+                      : existingSession.user.emailVerified
+                        ? "Continue this workspace"
+                        : "Continue verification"}
+                    <ArrowRight />
+                  </button>
+                  <button
+                    className={styles.modeSwitch}
+                    onClick={() => void restartOnboarding()}
+                    disabled={busy}
+                  >
+                    Sign out and start over
+                  </button>
                 </div>
-              )}
+              ) : (
+                <>
+                  <div className={styles.socials}>
+                    {providers?.googleRedirect ? (
+                      <a href={oauthUrl("google", "/onboarding?auth=complete")}>
+                        <span className={styles.google}>G</span> Continue with Google
+                      </a>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled
+                        title={
+                          authConfigReady
+                            ? "Google sign-in is not configured on this deployment."
+                            : "Google sign-in is waiting for the authentication service."
+                        }
+                      >
+                        <span className={styles.google}>G</span> Continue with Google
+                      </button>
+                    )}
+                  </div>
 
-              {providers && (providers.googleRedirect || providers.microsoftRedirect) && (
-                <div className={styles.or}>
-                  <span>or use email</span>
-                </div>
-              )}
+                  <div className={styles.or}>
+                    <span>or use email</span>
+                  </div>
 
-              <form className={styles.form} onSubmit={submitAccount}>
-                {mode === "signup" && (
-                  <div className={styles.twoFields}>
+                  <form className={styles.form} onSubmit={submitAccount}>
+                    {mode === "signup" && (
+                      <div className={styles.twoFields}>
+                        <label>
+                          <span>Your name</span>
+                          <input
+                            name="name"
+                            autoComplete="name"
+                            placeholder="Ada Lovelace"
+                            required
+                          />
+                        </label>
+                        <label>
+                          <span>Workspace</span>
+                          <input
+                            name="workspaceName"
+                            autoComplete="organization"
+                            placeholder="Northwind"
+                            required
+                          />
+                        </label>
+                      </div>
+                    )}
                     <label>
-                      <span>Your name</span>
-                      <input name="name" autoComplete="name" placeholder="Ada Lovelace" required />
-                    </label>
-                    <label>
-                      <span>Workspace</span>
+                      <span>Work email</span>
                       <input
-                        name="workspaceName"
-                        autoComplete="organization"
-                        placeholder="Northwind"
+                        name="email"
+                        type="email"
+                        autoComplete="email"
+                        placeholder="ada@northwind.co"
                         required
                       />
                     </label>
-                  </div>
-                )}
-                <label>
-                  <span>Work email</span>
-                  <input
-                    name="email"
-                    type="email"
-                    autoComplete="email"
-                    placeholder="ada@northwind.co"
-                    required
-                  />
-                </label>
-                <label>
-                  <span>Password</span>
-                  <div className={styles.password}>
-                    <input
-                      name="password"
-                      type={passwordVisible ? "text" : "password"}
-                      autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                      minLength={mode === "signup" ? 8 : 1}
-                      placeholder={mode === "signup" ? "At least 8 characters" : "Your password"}
-                      required
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setPasswordVisible((value) => !value)}
-                      aria-label={passwordVisible ? "Hide password" : "Show password"}
-                    >
-                      {passwordVisible ? <EyeOff /> : <Eye />}
+                    <label>
+                      <span>Password</span>
+                      <div className={styles.password}>
+                        <input
+                          name="password"
+                          type={passwordVisible ? "text" : "password"}
+                          autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                          minLength={mode === "signup" ? 8 : 1}
+                          placeholder={
+                            mode === "signup" ? "At least 8 characters" : "Your password"
+                          }
+                          required
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setPasswordVisible((value) => !value)}
+                          aria-label={passwordVisible ? "Hide password" : "Show password"}
+                        >
+                          {passwordVisible ? <EyeOff /> : <Eye />}
+                        </button>
+                      </div>
+                    </label>
+                    {error && (
+                      <p className={styles.error} role="alert">
+                        {error}
+                      </p>
+                    )}
+                    <button className={styles.primary} disabled={busy || !authConfigReady}>
+                      {!authConfigReady
+                        ? "Authentication unavailable"
+                        : busy
+                          ? "Opening your workspace…"
+                          : mode === "signup"
+                            ? "Create my workspace"
+                            : "Sign in"}
+                      <ArrowRight />
                     </button>
-                  </div>
-                </label>
-                {error && (
-                  <p className={styles.error} role="alert">
-                    {error}
-                  </p>
-                )}
-                <button className={styles.primary} disabled={busy}>
-                  {busy
-                    ? "Opening your workspace…"
-                    : mode === "signup"
-                      ? "Create my workspace"
-                      : "Sign in"}
-                  <ArrowRight />
-                </button>
-              </form>
-              <button
-                className={styles.modeSwitch}
-                onClick={() => {
-                  setMode(mode === "signup" ? "login" : "signup");
-                  setError(null);
-                }}
-              >
-                {mode === "signup"
-                  ? "Already have a workspace? Sign in"
-                  : "New to Renewly? Create a workspace"}
-              </button>
+                  </form>
+                  <button
+                    className={styles.modeSwitch}
+                    onClick={() => {
+                      setMode(mode === "signup" ? "login" : "signup");
+                      setError(null);
+                    }}
+                  >
+                    {mode === "signup"
+                      ? "Already have a workspace? Sign in"
+                      : "New to Renewly? Create a workspace"}
+                  </button>
+                </>
+              )}
             </div>
           )}
 
           {stage === "verify" && (
             <div className={styles.stage}>
+              <button type="button" className={styles.stageBack} onClick={returnToAccount}>
+                <ArrowLeft /> Back to account
+              </button>
               <div className={styles.seal}>
                 <Mail />
               </div>
@@ -417,6 +597,9 @@ function OnboardingContent() {
 
           {stage === "mandate" && (
             <div className={styles.stage}>
+              <button type="button" className={styles.stageBack} onClick={returnToAccount}>
+                <ArrowLeft /> Back to account
+              </button>
               <p className={styles.eyebrow}>Set the first boundary</p>
               <h1>
                 A mandate.
@@ -437,15 +620,13 @@ function OnboardingContent() {
                   </span>
                   <ArrowRight />
                 </a>
-                <a href={mailboxConnectUrl("outlook")}>
-                  <Mail />
-                  <span>
-                    <strong>Connect Outlook</strong>
-                    <small>Billing mail only · read-only</small>
-                  </span>
-                  <ArrowRight />
-                </a>
               </div>
+              {activeMailbox && (
+                <p className={styles.notice}>
+                  <Check />
+                  {activeMailbox.emailAddress} is connected through {activeMailbox.provider}.
+                </p>
+              )}
               {notice && (
                 <p className={styles.notice}>
                   <Check />
@@ -515,8 +696,20 @@ function OnboardingContent() {
                     {error}
                   </p>
                 )}
-                <button className={styles.primary} disabled={busy}>
-                  {busy ? "Saving your mandate…" : "Enter the control room"}
+                {!activeMailbox && (
+                  <p className={styles.connectionRequired}>
+                    A verified, read-only Gmail connection is required to continue.
+                  </p>
+                )}
+                <button
+                  className={styles.primary}
+                  disabled={busy || !authVerified || !activeMailbox}
+                >
+                  {busy
+                    ? "Checking your access…"
+                    : activeMailbox
+                      ? "Enter the control room"
+                      : "Connect mail to continue"}
                   <ArrowRight />
                 </button>
               </form>

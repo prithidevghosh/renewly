@@ -202,7 +202,7 @@ describe("verifyWebhook", () => {
   });
 
   it("skips verification in mock mode, where there is no shared secret", () => {
-    const mock = new LinqChannelAdapter({ mode: "mock" });
+    const mock = new LinqChannelAdapter({ mode: "disabled" });
     expect(mock.verifyWebhook({ rawBody: body, headers: {} }).event_type).toBe("message.received");
   });
 });
@@ -338,5 +338,110 @@ describe("parseInbound", () => {
     expect(
       adapter().parseInbound({ event_type: "message.received", data: { parts: [] } }),
     ).toBeNull();
+  });
+});
+
+/**
+ * A 2xx from `POST /chats` means the recipient's phone already has the message.
+ * Throwing because we could not find a chat id in the response made the outbox
+ * retry a send that had succeeded — five attempts, five buzzes, every time.
+ */
+describe("a chat response we cannot fully read", () => {
+  const send = async (body: unknown) => {
+    stubFetch(body);
+    return adapter().sendText({ to: "+15551230000", body: "hello" });
+  };
+
+  it("reads the id from the top level", async () => {
+    const result = await send({ id: "chat_top", last_message: { id: "msg_1" } });
+    expect(result.externalThreadId).toBe("chat_top");
+    expect(result.externalMessageId).toBe("msg_1");
+  });
+
+  it("reads the id when it is wrapped in `chat`", async () => {
+    const result = await send({ chat: { id: "chat_nested", last_message: { id: "msg_2" } } });
+    expect(result.externalThreadId).toBe("chat_nested");
+    expect(result.externalMessageId).toBe("msg_2");
+  });
+
+  it("reads the id when it is wrapped in `data`", async () => {
+    const result = await send({ data: { id: "chat_data" } });
+    expect(result.externalThreadId).toBe("chat_data");
+  });
+
+  it("reads a snake_case chat_id", async () => {
+    const result = await send({ chat_id: "chat_snake" });
+    expect(result.externalThreadId).toBe("chat_snake");
+  });
+
+  it("still reports delivery when no id can be found anywhere", async () => {
+    // The regression: this used to throw CHANNEL_SEND_FAILED and the outbox
+    // resent the same message on every retry.
+    const result = await send({ status: "queued" });
+
+    expect(result.delivered).toBe(true);
+    expect(result.externalThreadId).toBe("linq_thread_+15551230000");
+    expect(result.externalMessageId).toBeTruthy();
+  });
+
+  it("still fails when Linq itself rejects the send", async () => {
+    stubFetch({ error: { message: "recipient unreachable" } }, { status: 422 });
+    await expect(
+      adapter().sendText({ to: "+15551230000", body: "hello" }),
+    ).rejects.toThrowError(/recipient unreachable/);
+  });
+});
+
+/**
+ * Copying the whole `Authorization` value out of the docs is the ordinary way
+ * to configure this wrong, and the resulting `Bearer Bearer …` comes back as
+ * "Invalid or expired token" — which reads as a bad key and sends you looking
+ * in the wrong place entirely.
+ */
+describe("api key with the scheme still attached", () => {
+  const authOf = (calls: Array<{ init: RequestInit }>) =>
+    (calls[0]!.init.headers as Record<string, string>).authorization;
+
+  it("sends one Bearer, not two", async () => {
+    const calls = stubFetch({ id: "chat_1", last_message: { id: "msg_1" } });
+    const withScheme = new LinqChannelAdapter({
+      mode: "live",
+      apiKey: "Bearer linq_test_key",
+      fromNumber: "+12223334444",
+      webhookSecret: SECRET,
+    });
+
+    await withScheme.sendText({ to: "+15551230000", body: "hello" });
+
+    expect(authOf(calls)).toBe("Bearer linq_test_key");
+  });
+
+  it("tolerates odd spacing and casing around the scheme", async () => {
+    const calls = stubFetch({ id: "chat_1", last_message: { id: "msg_1" } });
+    const messy = new LinqChannelAdapter({
+      mode: "live",
+      apiKey: "  bearer   linq_test_key  ",
+      fromNumber: "+12223334444",
+      webhookSecret: SECRET,
+    });
+
+    await messy.sendText({ to: "+15551230000", body: "hello" });
+
+    expect(authOf(calls)).toBe("Bearer linq_test_key");
+  });
+
+  it("leaves a plain key exactly as configured", async () => {
+    const calls = stubFetch({ id: "chat_1", last_message: { id: "msg_1" } });
+    await adapter().sendText({ to: "+15551230000", body: "hello" });
+
+    expect(authOf(calls)).toBe("Bearer linq_test_key");
+  });
+
+  it("still refuses live mode when the key is only the scheme", () => {
+    // "Bearer " alone carries no credential, so it must fail at construction
+    // rather than send an empty token.
+    expect(
+      () => new LinqChannelAdapter({ mode: "live", apiKey: "Bearer ", fromNumber: "+1222" }),
+    ).toThrowError(/LINQ_API_KEY/);
   });
 });

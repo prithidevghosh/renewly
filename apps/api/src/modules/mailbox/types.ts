@@ -60,9 +60,12 @@ export interface MailboxClient {
  * yields the refresh token the monthly sweep needs — without it the connection
  * dies the first time the access token expires.
  */
-export const MAILBOX_SCOPES: Record<MailboxProvider, string[]> = {
+/*
+ * Keyed by the providers actually supported, not by the database enum, which
+ * still carries "outlook" for rows connected before it was removed.
+ */
+export const MAILBOX_SCOPES: Record<"gmail", string[]> = {
   gmail: ["https://www.googleapis.com/auth/gmail.readonly", "email", "openid"],
-  outlook: ["https://graph.microsoft.com/Mail.Read", "offline_access", "openid", "email"],
 };
 
 /** What the detector looks for. Deliberately broad; the model filters after. */

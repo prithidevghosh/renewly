@@ -51,6 +51,7 @@ export const authProviderEnum = pgEnum("auth_provider", ["password", "google", "
 
 /** Mailbox read access. Deliberately separate from the login identity: the
  *  restricted read scope is consented to later, not at signup. */
+/** Gmail is the only supported mailbox; "outlook" survives for existing rows. */
 export const mailboxProviderEnum = pgEnum("mailbox_provider", ["gmail", "outlook"]);
 
 export const mailboxStatusEnum = pgEnum("mailbox_status", [
