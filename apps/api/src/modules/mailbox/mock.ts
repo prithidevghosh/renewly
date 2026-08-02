@@ -1,9 +1,10 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { env } from "../../env.js";
 import { AppError } from "../../lib/errors.js";
 import { sha256 } from "../../lib/crypto.js";
+import { logger } from "../../lib/logger.js";
 import type { MailboxProvider } from "../../db/schema.js";
 import {
   MAILBOX_SCOPES,
@@ -34,7 +35,21 @@ interface Fixture {
 let cache: Fixture[] | null = null;
 
 function fixtures(): Fixture[] {
-  cache ??= readdirSync(FIXTURES)
+  if (cache) return cache;
+
+  // The fixtures are repository files, so a deployed image that trimmed them
+  // has no mock mail to serve. That is an empty inbox, not a crash: mock mode
+  // is the default, and a missing directory must not take down a request.
+  if (!existsSync(FIXTURES)) {
+    logger.warn(
+      { path: FIXTURES },
+      "mock mailbox has no fixtures directory — serving an empty inbox",
+    );
+    cache = [];
+    return cache;
+  }
+
+  cache = readdirSync(FIXTURES)
     .filter((name) => name.endsWith(".txt"))
     .sort()
     .map((name) => ({ name, raw: readFileSync(path.join(FIXTURES, name), "utf8") }));
