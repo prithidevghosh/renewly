@@ -4,6 +4,7 @@ import {
   approvalRequests,
   decisionPackages,
   subscriptions,
+  workspaces,
   type ApprovalRequest,
   type ApprovalState,
   type ChannelName,
@@ -19,6 +20,7 @@ import { randomToken, sha256 } from "../../lib/crypto.js";
 import { normalizeAmount } from "../../lib/money.js";
 import type { AuthContext } from "../../types/context.js";
 import { recordAudit } from "../audit/service.js";
+import { resolveAuthContext } from "../auth/service.js";
 import { decisionPackageSchema, isPayingAction } from "../decisions/engine.js";
 import { assertTransition, isTerminal } from "../conversations/stateMachine.js";
 
@@ -110,7 +112,25 @@ export async function createApproval(
   const existing = await findLiveApprovalForDecision(auth.workspace.id, decision.id, db);
   if (existing) return { approval: existing, created: false };
 
-  const idempotencyKey = `approval:${decision.id}:${decision.policyVersion}`;
+  /*
+   * The key has to be unique per *attempt*, not per decision. `findLive…` above
+   * already returns any approval still in play, so reaching here means every
+   * previous attempt is terminal — expired, failed, or cancelled — and asking
+   * again is legitimate. Keying on the decision alone made the unique index
+   * refuse that retry forever: a proposal whose send failed could never be sent
+   * again, and the notify job failed on every attempt with a constraint
+   * violation rather than anything a reader could act on.
+   *
+   * Counting prior attempts keeps the protection that matters. Two concurrent
+   * creates still compute the same ordinal and still collide, so the index goes
+   * on doing the one job it was added for.
+   */
+  const prior = await db
+    .select({ id: approvalRequests.id })
+    .from(approvalRequests)
+    .where(eq(approvalRequests.decisionId, decision.id));
+
+  const idempotencyKey = `approval:${decision.id}:${decision.policyVersion}:${prior.length}`;
   const expiresAt = new Date(Date.now() + env.APPROVAL_TTL_MINUTES * 60_000);
 
   const [row] = await db
@@ -282,6 +302,44 @@ export function verifyPayToken(approval: ApprovalRequest, token: string): boolea
   return approval.payTokenHash === sha256(token);
 }
 
+/**
+ * The pay link is opened on whatever device received the text, which holds no
+ * session — the token in the link is the entire credential. Unlike the authed
+ * route, where the token is a second factor on top of a session, here it is
+ * mandatory: an approval with no minted link authorizes nobody.
+ *
+ * The returned auth context belongs to the workspace owner. `approvalRequests`
+ * carries no user id, and `resolveAuthContext` asserts ownership, so the owner
+ * is the only principal that can stand in for the person who tapped the link.
+ */
+export async function authorizeByPayToken(
+  approvalId: string,
+  token: string | undefined,
+  db: Database = getDb(),
+): Promise<{ approval: ApprovalRequest; auth: AuthContext }> {
+  const approval = await getApprovalByIdUnscoped(approvalId, db);
+
+  if (!approval.payTokenHash) {
+    throw new AppError("UNAUTHORIZED", "This approval has no pay link", {
+      approvalId: approval.id,
+    });
+  }
+  if (!token || !verifyPayToken(approval, token)) {
+    throw new AppError("UNAUTHORIZED", "Invalid or missing pay token", {
+      approvalId: approval.id,
+    });
+  }
+
+  const [workspace] = await db
+    .select()
+    .from(workspaces)
+    .where(eq(workspaces.id, approval.workspaceId));
+  if (!workspace) throw notFound("Workspace");
+
+  const auth = await resolveAuthContext(workspace.ownerUserId, approval.workspaceId, db);
+  return { approval, auth };
+}
+
 /* -------------------------------------------------------------------------- */
 /* Queries                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -295,6 +353,19 @@ export async function getApprovalById(
     .select()
     .from(approvalRequests)
     .where(and(eq(approvalRequests.id, id), eq(approvalRequests.workspaceId, workspaceId)));
+  if (!row) throw notFound("Approval request");
+  return row;
+}
+
+/**
+ * Lookup by id alone, for the pay-link path where no workspace is known until
+ * the token has been verified. Callers must authorize before acting on the row.
+ */
+export async function getApprovalByIdUnscoped(
+  id: string,
+  db: Database = getDb(),
+): Promise<ApprovalRequest> {
+  const [row] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
   if (!row) throw notFound("Approval request");
   return row;
 }
