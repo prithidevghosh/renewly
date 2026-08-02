@@ -56,12 +56,23 @@ function prettyTransport(): LoggerOptions["transport"] {
     target: "pino-pretty",
     options: {
       colorize: true,
+      // Milliseconds matter when you are looking at why a request took 900ms.
       translateTime: "SYS:HH:MM:ss.l",
-      // The service/env pair is constant per process; the request id is not.
-      ignore: "pid,hostname,service,env",
+      /*
+       * The message already carries the interesting facts, so the object that
+       * follows is context rather than the headline. Hidden here:
+       *  - pid/hostname/service/env  constant for the whole process
+       *  - method/path               already in the message for request lines
+       *  - requestId                 shown, but last, via messageFormat below
+       */
+      ignore: "pid,hostname,service,env,method,path",
       messageKey: "msg",
       errorLikeObjectKeys: ["err", "error"],
-      singleLine: false,
+      // One line per event unless there is an error to expand.
+      singleLine: true,
+      // A short request-id tag lets you follow one request through the log
+      // without the full ULID taking up half the width.
+      messageFormat: "{if requestId}[2m[{requestId}][0m {end}{msg}",
     },
   };
 }

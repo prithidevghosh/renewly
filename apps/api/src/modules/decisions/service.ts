@@ -7,6 +7,7 @@ import { newId } from "../../lib/id.js";
 import { getLlmClient, type DecisionExplainContext } from "../../lib/llm.js";
 import { cmp, normalizeAmount } from "../../lib/money.js";
 import type { AuthContext } from "../../types/context.js";
+import { logger } from "../../lib/logger.js";
 import { recordAudit } from "../audit/service.js";
 import { replaceIdentifiedSavings, type SavingsActionType } from "../ledger/service.js";
 import { catalogAnnualCost, type CatalogTool } from "./catalog.js";
@@ -275,6 +276,21 @@ export async function generateDecisionPackage(
       db,
     );
   }
+
+  logger.info(
+    {
+      decisionId: row.id,
+      subscriptionId: subscription.id,
+      merchant: subscription.merchantName,
+      recommendation: outcome.recommendation,
+      savingsAnnual: outcome.savingsAnnual,
+      currency: subscription.currency,
+      confidence: outcome.confidence,
+      narrativeSource,
+      policyFlags: outcome.policyFlags,
+    },
+    `decision — ${outcome.recommendation} ${subscription.merchantName}, saves ${outcome.savingsAnnual} ${subscription.currency}/yr`,
+  );
 
   await recordAudit(
     {

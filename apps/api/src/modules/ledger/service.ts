@@ -10,6 +10,7 @@ import {
 import { notFound } from "../../lib/errors.js";
 import { toPage, type Page } from "../../lib/http.js";
 import { newId } from "../../lib/id.js";
+import { logger } from "../../lib/logger.js";
 import { normalizeAmount, sum } from "../../lib/money.js";
 import { recordAudit } from "../audit/service.js";
 
@@ -84,6 +85,20 @@ export async function recordSavings(
     })
     .returning();
   if (!row) throw new Error("savings insert returned no row");
+
+  // Identified is a claim; realized is banked. Log them at the same place so a
+  // reader can see which one just happened without inferring it.
+  logger.info(
+    {
+      savingsId: row.id,
+      subscriptionId: input.subscriptionId ?? null,
+      recognition: input.recognition,
+      actionType: input.actionType,
+      amountSaved: row.amountSaved,
+      currency: input.currency,
+    },
+    `savings ${input.recognition} — ${row.amountSaved} ${input.currency}/yr via ${input.actionType}`,
+  );
 
   await recordAudit(
     {

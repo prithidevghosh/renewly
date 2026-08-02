@@ -99,9 +99,16 @@ export async function verifyCode(
     .orderBy(desc(emailVerificationCodes.id))
     .limit(1);
 
-  if (!record) throw new AppError("VALIDATION_ERROR", "That code is not right");
+  if (!record) {
+    logger.warn({ userId: user.id, email }, "verification failed — no live code for this account");
+    throw new AppError("VALIDATION_ERROR", "That code is not right");
+  }
 
   if (record.attempts >= env.VERIFICATION_MAX_ATTEMPTS) {
+    logger.warn(
+      { userId: user.id, email, attempts: record.attempts },
+      "verification blocked — attempt ceiling reached, a new code is required",
+    );
     throw new AppError("RATE_LIMITED", "Too many attempts. Ask for a new code.", {
       maxAttempts: env.VERIFICATION_MAX_ATTEMPTS,
     });
@@ -117,6 +124,15 @@ export async function verifyCode(
       .update(emailVerificationCodes)
       .set({ attempts: record.attempts + 1 })
       .where(eq(emailVerificationCodes.id, record.id));
+    logger.warn(
+      {
+        userId: user.id,
+        email,
+        attempt: record.attempts + 1,
+        maxAttempts: env.VERIFICATION_MAX_ATTEMPTS,
+      },
+      "verification failed — wrong code",
+    );
     throw new AppError("VALIDATION_ERROR", "That code is not right", {
       attemptsRemaining: Math.max(0, env.VERIFICATION_MAX_ATTEMPTS - (record.attempts + 1)),
     });

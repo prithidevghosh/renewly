@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { getDb, type Database } from "../../db/client.js";
+import { logger } from "../../lib/logger.js";
 import { subscriptions, type DecisionPackageRow, type Subscription } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { annualize, cmp, fromMinor, normalizeAmount, toMinor } from "../../lib/money.js";
@@ -276,6 +277,18 @@ export async function confirmAttestedAction(input: {
     .where(eq(subscriptions.id, input.subscription.id))
     .returning();
   if (!updated) throw new Error("subscription update returned no row");
+
+  logger.info(
+    {
+      subscriptionId: input.subscription.id,
+      merchant: input.subscription.merchantName,
+      action: isCancel ? "cancel" : "rightsize",
+      amountSaved,
+      currency,
+      ...(seatsTarget !== null ? { seatsTarget } : {}),
+    },
+    `attested ${isCancel ? "cancel" : "rightsize"} — ${input.subscription.merchantName}, ${amountSaved} ${currency}/yr realized`,
+  );
 
   // The opportunity has been banked, so it is no longer merely identified.
   await retireIdentifiedForSubscription(input.subscription.id, db);

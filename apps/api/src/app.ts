@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { env } from "./env.js";
+import { accessLog } from "./middleware/accessLog.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { rateLimit } from "./middleware/rateLimit.js";
 import { requestId } from "./middleware/requestId.js";
@@ -34,6 +35,7 @@ export function createApp(): Hono<AppEnv> {
   app.notFound(notFoundHandler);
 
   app.use("*", requestId());
+  app.use("*", accessLog());
   app.use("*", securityHeaders());
   app.use(
     "*",

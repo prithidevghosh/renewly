@@ -13,6 +13,7 @@ import {
 } from "../../db/schema.js";
 import { AppError, notFound } from "../../lib/errors.js";
 import { newId } from "../../lib/id.js";
+import { logger } from "../../lib/logger.js";
 
 /**
  * The agent's transcript.
@@ -63,6 +64,10 @@ export async function startSession(input: StartSessionInput): Promise<AgentSessi
     db,
   });
 
+  logger.info(
+    { sessionId: session.id, workspaceId: input.workspaceId, kind: input.kind },
+    `agent session started — ${input.kind}`,
+  );
   return session;
 }
 
@@ -130,6 +135,7 @@ export async function stepStarted(
     updatedAt: new Date(),
   };
   await (db ?? getDb()).update(agentSessions).set(patch).where(eq(agentSessions.id, session.id));
+  logger.info({ sessionId: session.id, step }, `agent step — ${label}`);
   return appendEvent({ session, type: "step.started", step, payload: { label }, ...(db ? { db } : {}) });
 }
 
@@ -237,6 +243,10 @@ export async function raisePrompt(input: RaisePromptInput): Promise<AgentPrompt>
     .set({ status: "awaiting_input", updatedAt: new Date() })
     .where(eq(agentSessions.id, input.session.id));
 
+  logger.info(
+    { sessionId: input.session.id, promptKey: input.promptKey },
+    `agent waiting on the user — ${input.question}`,
+  );
   return prompt;
 }
 
@@ -388,6 +398,7 @@ export async function completeSession(
   db: Database = getDb(),
 ): Promise<AgentSession> {
   await appendEvent({ session, type: "session.completed", payload: summary, db });
+  logger.info({ sessionId: session.id, kind: session.kind, ...summary }, "agent session completed");
   return setTerminal(session.id, "completed", null, db);
 }
 
@@ -405,6 +416,7 @@ export async function failSession(
     payload: { message, code },
     db,
   });
+  logger.error({ sessionId: session.id, kind: session.kind, code, err: error }, `agent session failed — ${message}`);
   return setTerminal(session.id, "failed", message, db);
 }
 

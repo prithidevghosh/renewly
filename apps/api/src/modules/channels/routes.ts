@@ -83,6 +83,11 @@ channelRoutes.post("/connect", async (c) => {
     data: { channel: row.channel },
   });
 
+  c.get("log").info(
+    { channelId: row.id, channel: row.channel, status: row.status },
+    `channel connected — ${row.channel}`,
+  );
+
   return c.json(
     {
       channel: {
@@ -201,7 +206,10 @@ async function handleChannelWebhook(c: Context<AppEnv>, channel: ChannelName) {
   const connection = await findConnectionByExternalId(channel, inbound.from);
   if (!connection) {
     // An unknown sender is not an error the provider can fix, so 200 and drop.
-    logger.warn({ channel, from: inbound.from }, "inbound from unconnected handle");
+    logger.warn(
+      { channel, from: inbound.from },
+      `inbound message from an unconnected handle on ${channel} — dropped`,
+    );
     return c.json({ ok: true, ignored: true, reason: "CHANNEL_NOT_CONNECTED" });
   }
 
@@ -237,6 +245,11 @@ async function handleChannelWebhook(c: Context<AppEnv>, channel: ChannelName) {
     entityId: thread.id,
     data: { channel, externalMessageId: inbound.externalMessageId },
   });
+
+  logger.info(
+    { channel, threadId: thread.id, externalMessageId: inbound.externalMessageId },
+    `inbound ${channel} message — "${(inbound.text || inbound.tapback || "").slice(0, 60)}"`,
+  );
 
   const result = await handleInbound({
     auth,

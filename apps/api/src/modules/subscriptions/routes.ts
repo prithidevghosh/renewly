@@ -120,6 +120,17 @@ subscriptionRoutes.post("/", async (c) => {
     data: { merchantName: row.merchantName, amount: row.amount, sourceType: row.sourceType },
   });
 
+  c.get("log").info(
+    {
+      subscriptionId: row.id,
+      merchant: row.merchantName,
+      amount: row.amount,
+      currency: row.currency,
+      cycle: row.billingCycle,
+      requiresConfirmation: lowConfidenceFields(row.fieldConfidence).length > 0 && !row.confirmedAt,
+    },
+    `subscription tracked — ${row.merchantName} ${row.amount} ${row.currency}/${row.billingCycle}`,
+  );
   return c.json({ subscription: serializeSubscription(row) }, 201);
 });
 

@@ -76,7 +76,10 @@ function normalizeEmail(email: string): string {
 export async function signup(input: SignupInput, db: Database = getDb()): Promise<AuthResult> {
   const email = normalizeEmail(input.email);
   const [existing] = await db.select().from(users).where(eq(users.email, email));
-  if (existing) throw conflict("An account with that email already exists", { email });
+  if (existing) {
+    logger.warn({ email }, "signup rejected — email already registered");
+    throw conflict("An account with that email already exists", { email });
+  }
 
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
   const [user] = await db
@@ -98,6 +101,11 @@ export async function signup(input: SignupInput, db: Database = getDb()): Promis
     user.id,
     input.workspaceName?.trim() || `${input.name.split(" ")[0] ?? input.name}'s workspace`,
     db,
+  );
+
+  logger.info(
+    { userId: user.id, workspaceId: workspace.id, email, provider: "password" },
+    "signup — account created, awaiting email verification",
   );
 
   const issued = await issueVerificationCode(user, db);
@@ -156,6 +164,10 @@ export async function signInWithProvider(
     );
 
   if (identity) {
+    logger.info(
+      { provider: input.provider, userId: identity.userId, email },
+      "social sign-in — known identity",
+    );
     await storeIdentityTokens(identity.id, tokens, db);
     const [user] = await db.select().from(users).where(eq(users.id, identity.userId));
     if (!user) throw new AppError("INTERNAL_ERROR", "Identity points at a missing user");
@@ -166,6 +178,10 @@ export async function signInWithProvider(
 
   if (byEmail) {
     if (!profile.emailVerified) {
+      logger.warn(
+        { provider: input.provider, email },
+        "social sign-in refused — provider will not vouch for the address, so it cannot be linked",
+      );
       throw new AppError(
         "UNAUTHORIZED",
         `${input.provider} has not verified that address, so it cannot be linked to an existing account`,
@@ -202,6 +218,11 @@ export async function signInWithProvider(
 
   await linkIdentity(user.id, input.provider, profile, tokens, db);
   await createWorkspaceForUser(user.id, `${user.name.split(" ")[0] ?? user.name}'s workspace`, db);
+
+  logger.info(
+    { provider: input.provider, userId: user.id, email, emailVerified: profile.emailVerified },
+    "social sign-in — new account created",
+  );
 
   // A provider that will not vouch for the address still has to prove it.
   if (!profile.emailVerified) await issueVerificationCode(user, db);
@@ -302,7 +323,15 @@ export async function login(
   // dummy, so "this address exists but has no password" is not observable from
   // the response time.
   const ok = await bcrypt.compare(input.password, user?.passwordHash ?? DUMMY_HASH);
-  if (!user || !user.passwordHash || !ok) throw unauthorized("Invalid email or password");
+  if (!user || !user.passwordHash || !ok) {
+    // Why it failed is useful to an operator and must not reach the caller,
+    // who gets one indistinguishable 401 either way.
+    logger.warn(
+      { email, reason: !user ? "no such user" : !user.passwordHash ? "oauth-only account" : "wrong password" },
+      "login failed",
+    );
+    throw unauthorized("Invalid email or password");
+  }
 
   const bundle = await requireWorkspaceForUser(user.id, db);
 
@@ -315,6 +344,11 @@ export async function login(
       entityId: user.id,
     },
     db,
+  );
+
+  logger.info(
+    { userId: user.id, workspaceId: bundle.workspaceId, email, provider: "password" },
+    "login succeeded",
   );
 
   const { token, expiresAt } = await signToken({

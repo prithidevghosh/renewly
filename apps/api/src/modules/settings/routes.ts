@@ -96,6 +96,11 @@ settingsRoutes.patch("/", async (c) => {
     });
   }
 
+  c.get("log").info(
+    { changed: Object.keys(input), policyVersion: updated.policyVersion },
+    `policy updated — ${Object.keys(input).join(", ")} (version ${updated.policyVersion})`,
+  );
+
   return c.json({ settings: serializeSettings(updated) });
 });
 

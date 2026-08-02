@@ -14,6 +14,7 @@ import { env } from "../../env.js";
 import { AppError, notFound } from "../../lib/errors.js";
 import { toPage, type Page } from "../../lib/http.js";
 import { newId } from "../../lib/id.js";
+import { logger } from "../../lib/logger.js";
 import { randomToken, sha256 } from "../../lib/crypto.js";
 import { normalizeAmount } from "../../lib/money.js";
 import type { AuthContext } from "../../types/context.js";
@@ -189,12 +190,31 @@ export async function transition(input: TransitionInput): Promise<ApprovalReques
 
   if (!updated) {
     const current = await getApprovalById(approval.workspaceId, approval.id, db);
+    logger.warn(
+      { approvalId: approval.id, from: approval.state, attempted: to, actual: current.state },
+      `approval transition lost a race — already ${current.state}`,
+    );
     throw new AppError(
       "INVALID_STATE_TRANSITION",
       `Approval already moved to ${current.state}; ${approval.state} to ${to} no longer applies`,
       { from: approval.state, to, actual: current.state, raced: true },
     );
   }
+
+  // The approval state machine is the spine of every money-moving action, so
+  // each step it takes is worth a line. Failures are louder than progress.
+  const level = to === "failed" ? "warn" : "info";
+  logger[level](
+    {
+      approvalId: approval.id,
+      workspaceId: approval.workspaceId,
+      subscriptionId: approval.subscriptionId,
+      from: approval.state,
+      to,
+      ...(input.data ?? {}),
+    },
+    `approval ${approval.state} → ${to}`,
+  );
 
   await recordAudit(
     {
