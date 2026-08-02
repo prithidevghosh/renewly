@@ -13,12 +13,13 @@ import { transition } from "../approvals/service.js";
 import { deliverOutbound } from "../conversations/runtime.js";
 import { isExpirable } from "../conversations/stateMachine.js";
 import { claimNextJob, completeJob, failJob } from "./queues.js";
+import { sweepForProposals } from "./sweep.js";
 
 /**
- * The worker loop. Three responsibilities: drain the outbox, retire approvals
- * whose window has closed, and run queued jobs. All three are safe to run
- * repeatedly, which is the only property that matters for at-least-once
- * delivery.
+ * The worker loop. Four responsibilities: sweep for renewals worth proposing,
+ * drain the outbox, retire approvals whose window has closed, and run queued
+ * jobs. All four are safe to run repeatedly, which is the only property that
+ * matters for at-least-once delivery.
  */
 
 export interface TickResult {
@@ -26,9 +27,23 @@ export interface TickResult {
   outboxFailed: number;
   approvalsExpired: number;
   jobsProcessed: number;
+  proposalsQueued: number;
 }
 
+/**
+ * The sweep runs the decision engine per subscription, so it paces itself on
+ * SWEEP_INTERVAL_MS rather than riding every 2-second tick.
+ */
+let lastSweepAt = 0;
+
 export async function runTick(db: Database = getDb()): Promise<TickResult> {
+  let proposalsQueued = 0;
+  if (Date.now() - lastSweepAt >= env.SWEEP_INTERVAL_MS) {
+    lastSweepAt = Date.now();
+    const sweep = await sweepForProposals(db);
+    proposalsQueued = sweep.queued;
+  }
+
   const [outbox, expired, jobsRun] = [
     await drainOutbox(db),
     await expireApprovals(db),
@@ -40,6 +55,7 @@ export async function runTick(db: Database = getDb()): Promise<TickResult> {
     outboxFailed: outbox.failed,
     approvalsExpired: expired,
     jobsProcessed: jobsRun,
+    proposalsQueued,
   };
 }
 
@@ -63,11 +79,22 @@ export async function drainOutbox(
   let failed = 0;
 
   for (const message of due) {
-    // Claim first, so a second worker cannot send the same message.
+    // Claim first, so a second worker cannot send the same message. The status
+    // stays `pending` for the duration of the send, so `status = 'pending'`
+    // alone does not make this exclusive — two overlapping drains would both
+    // match and both deliver. Comparing `attempts` as well turns it into a
+    // compare-and-set: both readers saw the same count, only one write lands,
+    // and the loser skips.
     const [claimed] = await db
       .update(outboxMessages)
       .set({ attempts: message.attempts + 1, updatedAt: new Date() })
-      .where(and(eq(outboxMessages.id, message.id), eq(outboxMessages.status, "pending")))
+      .where(
+        and(
+          eq(outboxMessages.id, message.id),
+          eq(outboxMessages.status, "pending"),
+          eq(outboxMessages.attempts, message.attempts),
+        ),
+      )
       .returning();
     if (!claimed) continue;
 
@@ -271,7 +298,10 @@ export function startWorker(db: Database = getDb()): void {
     running = true;
     try {
       const result = await runTick(db);
-      if (result.outboxSent + result.jobsProcessed + result.approvalsExpired > 0) {
+      if (
+        result.outboxSent + result.jobsProcessed + result.approvalsExpired + result.proposalsQueued >
+        0
+      ) {
         logger.debug(result, "worker tick");
       }
     } catch (error) {
