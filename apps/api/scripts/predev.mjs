@@ -13,6 +13,23 @@ import path from "node:path";
  */
 
 const PORT = Number(process.env.PORT ?? 4000);
+/** `--force` stops whatever is listening instead of refusing to start. */
+const FORCE = process.argv.includes("--force");
+
+/** The PID actually listening on the port, or null. Clients do not count. */
+async function listenerPid() {
+  try {
+    const { execSync } = await import("node:child_process");
+    const out = execSync(`lsof -ti:${PORT} -sTCP:LISTEN`, {
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .trim();
+    return out.split("\n").filter(Boolean)[0] ?? null;
+  } catch {
+    return null;
+  }
+}
 
 function readEnvFile() {
   const file = path.resolve(process.cwd(), ".env");
@@ -47,21 +64,24 @@ function portInUse(port) {
 
 const env = { ...readEnvFile(), ...process.env };
 
+if ((await portInUse(PORT)) && FORCE) {
+  const pid = await listenerPid();
+  if (pid) {
+    process.kill(Number(pid), "SIGTERM");
+    console.log(`  stopped the API already on port ${PORT} (pid ${pid})`);
+    // Give the old process a moment to release the port and its PGlite lock.
+    for (let i = 0; i < 20 && (await portInUse(PORT)); i += 1) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+}
+
 if (await portInUse(PORT)) {
   // pnpm wraps a non-zero exit in ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL, which
   // reads like a crash. Say plainly that nothing is broken, and name the
   // process so the fix is one copy-paste rather than a hunt.
-  let owner = "";
-  try {
-    const { execSync } = await import("node:child_process");
-    const pid = execSync(`lsof -ti:${PORT}`, { stdio: ["ignore", "pipe", "ignore"] })
-      .toString()
-      .trim()
-      .split("\n")[0];
-    if (pid) owner = `  It is process ${pid}.\n`;
-  } catch {
-    // lsof is missing or found nothing; the generic advice below still stands.
-  }
+  const pid = await listenerPid();
+  const owner = pid ? `  It is process ${pid}.\n` : "";
 
   console.error(
     [
@@ -76,7 +96,7 @@ if (await portInUse(PORT)) {
       "",
       "  Use the one already running, or replace it:",
       "",
-      `    lsof -ti:${PORT} | xargs kill && pnpm --filter @renewly/api dev`,
+      "    pnpm --filter @renewly/api dev:restart",
       "",
       `  Or run this copy beside it:  PORT=4001 pnpm --filter @renewly/api dev`,
       "",
