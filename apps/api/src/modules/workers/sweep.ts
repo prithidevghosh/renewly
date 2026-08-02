@@ -59,9 +59,15 @@ export async function sweepForProposals(
        * every sweep, forever.
        */
       if (!(await hasActiveConnection(workspace.id, auth.settings.primaryChannel, db))) {
-        logger.debug(
+        /*
+         * Warn, not debug. Production runs at info, so a debug line here meant
+         * the sweep dropped every proposal a workspace had and said nothing at
+         * all — a renewal going unproposed is the loudest thing this service
+         * can do wrong, and it was the quietest thing in the log.
+         */
+        logger.warn(
           { workspaceId: workspace.id, channel: auth.settings.primaryChannel },
-          "sweep skipped a workspace with no connected channel",
+          "sweep skipped a workspace with no connected channel — nothing can be proposed to it",
         );
         continue;
       }

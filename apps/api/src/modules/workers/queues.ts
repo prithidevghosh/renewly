@@ -100,6 +100,22 @@ export async function failJob(
       lastError: message.slice(0, 1000),
       runAt: new Date(Date.now() + backoffMs),
       updatedAt: new Date(),
+      /*
+       * A terminal job releases its dedupe key.
+       *
+       * `enqueueJob` collapses against the key in any status, failed included,
+       * so a job that died held the key for the rest of the deployment's life
+       * and every later enqueue of the same work was silently deduped into it.
+       * A caller whose key is derived from state the failure prevented — the
+       * sweep keys on the approval count, and the approval is created by the
+       * job that just failed — recomputes the same key forever and never sends
+       * again. That is not deduplication, it is a permanent block, and it kept
+       * two renewals unproposed until the rows were deleted by hand.
+       *
+       * Keeping the row is still right: it is the record of what went wrong.
+       * Only its claim on future work is given up.
+       */
+      ...(exhausted ? { dedupeKey: null } : {}),
     })
     .where(eq(jobs.id, job.id));
 

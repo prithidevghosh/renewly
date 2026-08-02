@@ -318,7 +318,17 @@ export const workspaceSettings = pgTable("workspace_settings", {
   teamSize: integer("team_size").notNull().default(1),
   /** { start: "22:00", end: "08:00", tz: "UTC" }. Outbound is deferred, never dropped. */
   quietHoursJson: jsonb("quiet_hours_json").$type<QuietHours | null>(),
-  primaryChannel: channelEnum("primary_channel").notNull().default("simulator"),
+  /**
+   * Where proposals are sent. Defaulted to "simulator" until it was noticed
+   * that the simulator does not exist outside the test doubles, so every
+   * workspace was born pointing at a channel production refuses to construct —
+   * and the sweep silently skipped it for the rest of its life. iMessage is the
+   * only channel with a real adapter, so it is the only honest default.
+   *
+   * The default is not what makes delivery work: `hasActiveConnection` is the
+   * gate, and a workspace with no connection is skipped whatever this says.
+   */
+  primaryChannel: channelEnum("primary_channel").notNull().default("imessage"),
   /** Bumped on every policy change so decisions can pin what they were judged against. */
   policyVersion: integer("policy_version").notNull().default(1),
   currency: char("currency", { length: 3 }).notNull().default("USD"),

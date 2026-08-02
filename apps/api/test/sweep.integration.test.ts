@@ -207,16 +207,18 @@ describe("sweepForProposals", () => {
     await signUp(client);
 
     const before = await client.get<{ settings: { primaryChannel: string } }>("/v1/settings");
-    expect(before.body.settings.primaryChannel).toBe("simulator");
+    expect(before.body.settings.primaryChannel).toBe("imessage");
 
+    // Connect something other than the default, or the assertion below passes
+    // whether or not connecting does anything at all.
     const connected = await client.post("/v1/channels/connect", {
-      channel: "imessage",
+      channel: "simulator",
       externalId: "+15550109999",
     });
     expect(connected.status).toBe(201);
 
     const after = await client.get<{ settings: { primaryChannel: string } }>("/v1/settings");
-    expect(after.body.settings.primaryChannel).toBe("imessage");
+    expect(after.body.settings.primaryChannel).toBe("simulator");
   });
 
   it("POST /v1/agent/sweep runs one pass and reports it", async () => {

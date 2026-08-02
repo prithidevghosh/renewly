@@ -172,7 +172,7 @@ describe("settings", () => {
     // The solo-founder assumption, so a multi-seat invoice can be reasoned about
     // on arrival without asking anyone how many people there are.
     expect(response.body.settings.teamSize).toBe(1);
-    expect(response.body.settings.primaryChannel).toBe("simulator");
+    expect(response.body.settings.primaryChannel).toBe("imessage");
   });
 
   it("patches the team size, so the seat rule can be told it is wrong", async () => {

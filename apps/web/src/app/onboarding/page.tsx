@@ -45,6 +45,24 @@ const fieldError = (error: unknown) => {
   return error.message;
 };
 
+/**
+ * Linq addresses recipients in E.164 and rejects anything else, so the shape is
+ * settled here rather than at the far end of a queue where the failure would
+ * arrive as an undelivered proposal. A bare ten-digit number is read as US,
+ * which is what someone typing their own number usually means; anything else
+ * has to carry its own country code.
+ */
+function normalizePhone(input: string): string | null {
+  const trimmed = input.trim();
+  const digits = trimmed.replace(/[^\d]/g, "");
+  if (trimmed.startsWith("+")) {
+    return digits.length >= 8 && digits.length <= 15 ? `+${digits}` : null;
+  }
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return null;
+}
+
 function OnboardingContent() {
   const router = useRouter();
   const search = useSearchParams();
@@ -63,7 +81,7 @@ function OnboardingContent() {
     search.get("error") === "access_denied" ? "Sign-in was cancelled. Nothing changed." : null,
   );
   const [notice, setNotice] = useState<string | null>(null);
-  const [settings, setSettings] = useState({ budget: "", ceiling: "", teamSize: "1" });
+  const [settings, setSettings] = useState({ budget: "", ceiling: "", teamSize: "1", phone: "" });
 
   const activeMailbox = mailboxes.find((mailbox) => mailbox.status === "active") ?? null;
 
@@ -84,11 +102,14 @@ function OnboardingContent() {
     const mailboxResponse = await apiFetch<{ connections: MailboxConnection[] }>("/v1/mailbox");
     setAuthVerified(true);
     setMailboxes(mailboxResponse.connections);
-    setSettings({
+    // Functional update so a number already typed survives the re-hydrate that
+    // follows an OAuth round trip. The API has nowhere to read it back from.
+    setSettings((previous) => ({
+      ...previous,
       budget: me.settings.aiMonthlyBudget ?? "",
       ceiling: me.settings.spendCeiling ?? "",
       teamSize: String(me.settings.teamSize),
-    });
+    }));
     if (advance) setStage("mandate");
     return { me, connections: mailboxResponse.connections };
   }, []);
@@ -235,6 +256,23 @@ function OnboardingContent() {
         return;
       }
 
+      /*
+       * A number to reach you on is not optional, and this is the only place in
+       * the product that asks for one. Without it the agent reads the mail,
+       * forms a decision, and has nowhere to send it — the sweep skips the
+       * workspace and nothing ever says why.
+       */
+      const phone = normalizePhone(settings.phone);
+      if (!phone) {
+        setError("Add a mobile number so Renewly can text you before it acts.");
+        return;
+      }
+
+      await apiFetch("/v1/channels/connect", {
+        method: "POST",
+        body: JSON.stringify({ channel: "imessage", externalId: phone }),
+      });
+
       await apiFetch("/v1/settings", {
         method: "PATCH",
         body: JSON.stringify({
@@ -293,7 +331,7 @@ function OnboardingContent() {
       setEmail("");
       setDevCode(null);
       setNotice(null);
-      setSettings({ budget: "", ceiling: "", teamSize: "1" });
+      setSettings({ budget: "", ceiling: "", teamSize: "1", phone: "" });
       setMode("signup");
       setStage("account");
       router.replace("/onboarding");
@@ -667,6 +705,22 @@ function OnboardingContent() {
                       />
                     </div>
                     <small>Each action above this amount waits for approval.</small>
+                  </label>
+                  <label>
+                    <span>Where we text you</span>
+                    <input
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="tel"
+                      placeholder="+1 555 010 4477"
+                      value={settings.phone}
+                      onChange={(event) => setSettings({ ...settings, phone: event.target.value })}
+                      required
+                    />
+                    <small>
+                      Every renewal is proposed here first. Reply to approve — nothing is paid
+                      without you.
+                    </small>
                   </label>
                   <label>
                     <span>People in the workspace</span>
