@@ -46,6 +46,43 @@ export const sourceTypeEnum = pgEnum("source_type", ["manual", "email", "file", 
 
 export const workspaceRoleEnum = pgEnum("workspace_role", ["owner", "viewer"]);
 
+/** How a person proves who they are. One user may hold several. */
+export const authProviderEnum = pgEnum("auth_provider", ["password", "google", "microsoft"]);
+
+/** Mailbox read access. Deliberately separate from the login identity: the
+ *  restricted read scope is consented to later, not at signup. */
+export const mailboxProviderEnum = pgEnum("mailbox_provider", ["gmail", "outlook"]);
+
+export const mailboxStatusEnum = pgEnum("mailbox_status", [
+  "pending",
+  "active",
+  "revoked",
+  "error",
+]);
+
+export const agentSessionKindEnum = pgEnum("agent_session_kind", [
+  "onboarding",
+  "detect",
+  "decide",
+  "monthly_sweep",
+]);
+
+export const agentSessionStatusEnum = pgEnum("agent_session_status", [
+  "running",
+  "awaiting_input",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+/** What the decision stage found. One row per finding, cached until superseded. */
+export const findingKindEnum = pgEnum("finding_kind", [
+  "category_over_cap",
+  "purpose_overlap",
+  "annual_switch",
+  "renewal_due",
+]);
+
 export const candidateStatusEnum = pgEnum("candidate_status", [
   "pending",
   "accepted",
@@ -166,12 +203,65 @@ export const users = pgTable(
   {
     id: text("id").primaryKey(),
     email: text("email").notNull(),
-    passwordHash: text("password_hash").notNull(),
+    /** Null for accounts that only ever signed in through Google or Microsoft. */
+    passwordHash: text("password_hash"),
     name: text("name").notNull(),
+    /**
+     * Set by the emailed code, or immediately on OAuth signup because the
+     * provider has already proven the address. Null means the account exists
+     * but cannot yet be used.
+     */
+    emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
+    avatarUrl: text("avatar_url"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("users_email_unique").on(t.email)],
+);
+
+export const authIdentities = pgTable(
+  "auth_identities",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: authProviderEnum("provider").notNull(),
+    /** The provider's stable subject id. For `password` this is the email. */
+    providerAccountId: text("provider_account_id").notNull(),
+    email: text("email"),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    scopes: jsonb("scopes").$type<string[]>().notNull().default([]),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One provider account maps to exactly one user, globally. This is what
+    // stops two people claiming the same Google account.
+    uniqueIndex("auth_identities_provider_unique").on(t.provider, t.providerAccountId),
+    index("auth_identities_user_idx").on(t.userId),
+  ],
+);
+
+export const emailVerificationCodes = pgTable(
+  "email_verification_codes",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** Hashed, never stored in the clear — this is a credential. */
+    codeHash: text("code_hash").notNull(),
+    email: text("email").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    /** Guessing a six-digit code is cheap without a ceiling. */
+    attempts: integer("attempts").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("email_verification_user_idx").on(t.userId)],
 );
 
 export const workspaces = pgTable(
@@ -264,6 +354,22 @@ export const subscriptions = pgTable(
     status: subscriptionStatusEnum("status").notNull().default("active"),
     criticality: criticalityEnum("criticality").notNull().default("nice_to_have"),
     jobCategory: text("job_category"),
+    /**
+     * What the tool is for, written by the model from a web search. Prose meant
+     * for a human, and the input the overlap analysis compares when deciding
+     * whether two subscriptions do the same job.
+     */
+    purpose: text("purpose"),
+    /** "coding", "art_generation", "marketing" — assigned by the model, and the
+     *  key that `category_caps` budgets against. */
+    category: text("category"),
+    /** Plan specifics the model pulled out of the receipt: tier, seats, limits. */
+    planDetails: jsonb("plan_details").$type<Record<string, unknown>>().notNull().default({}),
+    /** Earliest receipt we have for this tool. Drives the "used 3+ months"
+     *  filter that gates the annual-switch analysis. */
+    activeFrom: timestamp("active_from", { withTimezone: true }),
+    /** Most recent receipt. A tool with no charge in the current month is dead. */
+    lastPaidAt: timestamp("last_paid_at", { withTimezone: true }),
     usageNote: text("usage_note"),
     seatsTotal: integer("seats_total").notNull().default(1),
     /** Seats the team actually touches. Null means unknown, not zero. */
@@ -821,6 +927,277 @@ export const waitlistEntries = pgTable(
 export type User = typeof users.$inferSelect;
 export type Workspace = typeof workspaces.$inferSelect;
 export type WorkspaceSettings = typeof workspaceSettings.$inferSelect;
+/* -------------------------------------------------------------------------- */
+/* Mailbox                                                                    */
+/* -------------------------------------------------------------------------- */
+
+export const mailboxConnections = pgTable(
+  "mailbox_connections",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: mailboxProviderEnum("provider").notNull(),
+    /** The mailbox actually granted, which need not be the login address. */
+    emailAddress: text("email_address").notNull(),
+    /** Sealed with the secret box; never readable from a database dump alone. */
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    scopes: jsonb("scopes").$type<string[]>().notNull().default([]),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    status: mailboxStatusEnum("status").notNull().default("pending"),
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    /** Gmail historyId or Graph deltaLink, so a resync reads only what is new. */
+    syncCursor: text("sync_cursor"),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("mailbox_connections_unique").on(t.workspaceId, t.provider, t.emailAddress),
+    index("mailbox_connections_workspace_idx").on(t.workspaceId),
+  ],
+);
+
+/**
+ * Every message the detector looked at, kept whether or not it turned out to be
+ * a subscription. Two reasons: the "was this tool charged this month?" question
+ * is answered from here rather than re-fetched, and a user asking why a tool was
+ * called dead can be shown the receipts that were actually seen.
+ */
+export const mailReceipts = pgTable(
+  "mail_receipts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    mailboxConnectionId: text("mailbox_connection_id").references(() => mailboxConnections.id, {
+      onDelete: "set null",
+    }),
+    providerMessageId: text("provider_message_id").notNull(),
+    subject: text("subject"),
+    fromAddr: text("from_addr"),
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    snippet: text("snippet"),
+    /** True once the model confirms this is a SaaS subscription charge. */
+    isSaas: boolean("is_saas").notNull().default(false),
+    merchantCanonical: text("merchant_canonical"),
+    amount: numeric("amount", { precision: 14, scale: 2 }),
+    currency: char("currency", { length: 3 }),
+    billingCycle: billingCycleEnum("billing_cycle"),
+    parsed: jsonb("parsed").$type<Record<string, unknown>>().notNull().default({}),
+    subscriptionId: text("subscription_id").references(() => subscriptions.id, {
+      onDelete: "set null",
+    }),
+    contentHash: text("content_hash"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // A re-run of the sweep must not re-import the same message.
+    uniqueIndex("mail_receipts_message_unique").on(t.workspaceId, t.providerMessageId),
+    index("mail_receipts_merchant_idx").on(t.workspaceId, t.merchantCanonical),
+    index("mail_receipts_received_idx").on(t.workspaceId, t.receivedAt),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
+/* Budget policy                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Per-category monthly ceiling. Separate from `workspace_settings.category_
+ * ceilings` because these are set conversationally during onboarding, may be
+ * declined, and are raised by the "keep both" answer to an over-cap proposal.
+ */
+export const categoryCaps = pgTable(
+  "category_caps",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    category: text("category").notNull(),
+    /** Null means the user was asked and declined to set one. */
+    maxMonthly: numeric("max_monthly", { precision: 14, scale: 2 }),
+    currency: char("currency", { length: 3 }).notNull().default("USD"),
+    /** `user` when they answered, `raised` when a keep-both reply lifted it. */
+    source: text("source").notNull().default("user"),
+    askedAt: timestamp("asked_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("category_caps_pk").on(t.workspaceId, t.category)],
+);
+
+/* -------------------------------------------------------------------------- */
+/* Decision findings                                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The decision stage's cache. Each row is one thing worth telling the user,
+ * computed once per sweep and superseded on the next, so the proposal stage
+ * reads findings rather than recomputing analysis per message.
+ */
+export const decisionFindings = pgTable(
+  "decision_findings",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    kind: findingKindEnum("kind").notNull(),
+    /** Subscriptions this finding is about, most significant first. */
+    subjectIds: jsonb("subject_ids").$type<string[]>().notNull().default([]),
+    category: text("category"),
+    /** Kind-specific detail: overspend percentage, cheapest of an overlapping
+     *  pair, annual saving. Shape is validated by the reader, not the column. */
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    /** Money at stake per year, so findings can be ranked across kinds. */
+    impactAnnual: numeric("impact_annual", { precision: 14, scale: 2 }),
+    currency: char("currency", { length: 3 }).notNull().default("USD"),
+    agentSessionId: text("agent_session_id"),
+    supersededAt: timestamp("superseded_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("decision_findings_workspace_idx").on(t.workspaceId, t.kind),
+    index("decision_findings_live_idx").on(t.workspaceId, t.supersededAt),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
+/* Agent sessions                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One run of the agent, which the terminal renders. The session row holds only
+ * position and status; everything the user sees is an append-only event, so a
+ * refresh replays rather than reconstructs.
+ */
+export const agentSessions = pgTable(
+  "agent_sessions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    kind: agentSessionKindEnum("kind").notNull(),
+    status: agentSessionStatusEnum("status").notNull().default("running"),
+    /** Machine-readable step id, e.g. "fetch_mail". Drives resumption. */
+    currentStep: text("current_step"),
+    /** Scratch state carried between steps so a resumed run does not redo work. */
+    state: jsonb("state").$type<Record<string, unknown>>().notNull().default({}),
+    /** Highest event seq written. The allocator reads and bumps this. */
+    lastSeq: integer("last_seq").notNull().default(0),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("agent_sessions_workspace_idx").on(t.workspaceId, t.status),
+    index("agent_sessions_user_idx").on(t.userId),
+  ],
+);
+
+/**
+ * The transcript. `seq` is per-session and gap-free, which is what lets a
+ * reconnecting terminal say "I have up to 41, send me 42 onwards" and be
+ * certain it missed nothing.
+ *
+ * `type` is text rather than an enum on purpose: the event vocabulary will grow
+ * with every agent step, and a migration per new message kind would be friction
+ * with no safety benefit — readers already ignore types they do not know.
+ */
+export const agentEvents = pgTable(
+  "agent_events",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(),
+    type: text("type").$type<AgentEventType>().notNull(),
+    step: text("step"),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("agent_events_seq_unique").on(t.sessionId, t.seq),
+    index("agent_events_session_idx").on(t.sessionId, t.seq),
+  ],
+);
+
+/**
+ * A question the agent asked that is blocking the run. Kept as a row rather
+ * than inferred from the event log so that "what is this session waiting for"
+ * is a single indexed read, and so a late or duplicate answer can be rejected.
+ */
+export const agentPrompts = pgTable(
+  "agent_prompts",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    /** The event that posed the question, so the UI can anchor the answer. */
+    eventSeq: integer("event_seq").notNull(),
+    /** Stable key the step uses to read the answer back, e.g. "cap:coding". */
+    promptKey: text("prompt_key").notNull(),
+    question: text("question").notNull(),
+    /** Offered choices, when the answer is not free text. */
+    options: jsonb("options").$type<AgentPromptOption[]>().notNull().default([]),
+    /** Free text is allowed alongside options; a cap is a number, not a choice. */
+    freeText: boolean("free_text").notNull().default(false),
+    skippable: boolean("skippable").notNull().default(false),
+    answer: text("answer"),
+    answeredAt: timestamp("answered_at", { withTimezone: true }),
+    /** Mirrors the proposal, so an unanswered question does not hang forever. */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("agent_prompts_key_unique").on(t.sessionId, t.promptKey),
+    index("agent_prompts_open_idx").on(t.sessionId, t.answeredAt),
+  ],
+);
+
+export interface AgentPromptOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+/**
+ * The event vocabulary the terminal renders. Additive by design — a client that
+ * meets an unknown type must ignore it rather than fail.
+ */
+export type AgentEventType =
+  | "session.started"
+  | "step.started"
+  | "step.progress"
+  | "step.completed"
+  | "log"
+  | "finding"
+  | "prompt"
+  | "prompt.answered"
+  | "proposal.sent"
+  | "session.completed"
+  | "session.failed"
+  | "error";
+
 export type Subscription = typeof subscriptions.$inferSelect;
 export type RenewalEvent = typeof renewalEvents.$inferSelect;
 export type CsvImport = typeof csvImports.$inferSelect;
@@ -841,6 +1218,22 @@ export type OutboxMessage = typeof outboxMessages.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
 export type InboundEmail = typeof inboundEmails.$inferSelect;
 export type WaitlistEntry = typeof waitlistEntries.$inferSelect;
+
+export type AuthIdentity = typeof authIdentities.$inferSelect;
+export type EmailVerificationCode = typeof emailVerificationCodes.$inferSelect;
+export type MailboxConnection = typeof mailboxConnections.$inferSelect;
+export type MailReceipt = typeof mailReceipts.$inferSelect;
+export type CategoryCap = typeof categoryCaps.$inferSelect;
+export type DecisionFinding = typeof decisionFindings.$inferSelect;
+export type AgentSession = typeof agentSessions.$inferSelect;
+export type AgentEvent = typeof agentEvents.$inferSelect;
+export type AgentPrompt = typeof agentPrompts.$inferSelect;
+
+export type AuthProvider = (typeof authProviderEnum.enumValues)[number];
+export type MailboxProvider = (typeof mailboxProviderEnum.enumValues)[number];
+export type AgentSessionKind = (typeof agentSessionKindEnum.enumValues)[number];
+export type AgentSessionStatus = (typeof agentSessionStatusEnum.enumValues)[number];
+export type FindingKind = (typeof findingKindEnum.enumValues)[number];
 
 export type ChannelName = (typeof channelEnum.enumValues)[number];
 export type ApprovalState = (typeof approvalStateEnum.enumValues)[number];

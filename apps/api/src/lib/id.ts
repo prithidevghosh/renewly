@@ -27,7 +27,15 @@ export type IdPrefix =
   | "obx"
   | "idm"
   | "eml"
-  | "wlt";
+  | "wlt"
+  | "ags"
+  | "age"
+  | "agp"
+  | "aid"
+  | "evc"
+  | "mbx"
+  | "mrc"
+  | "fnd";
 
 export function newId(prefix: IdPrefix): string {
   return `${prefix}_${ulid()}`;

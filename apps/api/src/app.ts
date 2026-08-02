@@ -5,6 +5,7 @@ import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { rateLimit } from "./middleware/rateLimit.js";
 import { requestId } from "./middleware/requestId.js";
 import { securityHeaders } from "./middleware/securityHeaders.js";
+import { agentRoutes } from "./modules/agent/routes.js";
 import { approvalRoutes } from "./modules/approvals/routes.js";
 import { authRoutes, meRoutes } from "./modules/auth/routes.js";
 import { channelRoutes, channelWebhookRoutes } from "./modules/channels/routes.js";
@@ -38,7 +39,9 @@ export function createApp(): Hono<AppEnv> {
     cors({
       origin: env.CORS_ORIGINS,
       allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-      allowHeaders: ["content-type", "authorization", "x-request-id"],
+      // last-event-id is what a reconnecting EventSource sends to resume the
+      // agent stream; without it a cross-origin terminal silently restarts.
+      allowHeaders: ["content-type", "authorization", "x-request-id", "last-event-id"],
       exposeHeaders: ["x-request-id"],
       credentials: true,
       maxAge: 600,
@@ -89,6 +92,7 @@ export function createApp(): Hono<AppEnv> {
   app.route("/v1/intake", intakeRoutes);
   app.route("/v1/intake/mail-address", mailAddressRoutes);
   app.route("/v1/decisions", decisionRoutes);
+  app.route("/v1/agent", agentRoutes);
   app.route("/v1/approvals", approvalRoutes);
   app.route("/v1/payment-sessions", paymentSessionRoutes);
   app.route("/v1/receipts", receiptRoutes);
