@@ -5,6 +5,7 @@
 export type ErrorCode =
   | "UNAUTHORIZED"
   | "FORBIDDEN"
+  | "EMAIL_NOT_VERIFIED"
   | "NOT_FOUND"
   | "VALIDATION_ERROR"
   | "KILL_SWITCH_ENABLED"
@@ -27,6 +28,10 @@ export type ErrorCode =
 const STATUS_BY_CODE: Record<ErrorCode, number> = {
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
+  // 403 rather than 401: the session is valid, the account simply is not usable
+  // yet. A 401 would send well-behaved clients back to the login screen, which
+  // is exactly the wrong place — the code is in their inbox.
+  EMAIL_NOT_VERIFIED: 403,
   NOT_FOUND: 404,
   VALIDATION_ERROR: 400,
   KILL_SWITCH_ENABLED: 409,

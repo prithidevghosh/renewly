@@ -24,6 +24,14 @@ export interface SignedUpUser {
   password: string;
 }
 
+/**
+ * Signs up and completes email verification, because an unverified account
+ * cannot reach anything and every journey below this needs a usable session.
+ *
+ * The code is taken from the signup response, which returns it only in mock
+ * mail mode. That means the suite drives the real verification path rather than
+ * a back door — if verification breaks, these fail.
+ */
 export async function signUp(
   client: ApiClient,
   overrides: Partial<{ email: string; password: string; name: string }> = {},
@@ -37,6 +45,49 @@ export async function signUp(
     token: string;
     workspaceId: string;
     user: { id: string };
+    verificationCode: string | null;
+  }>("/v1/auth/signup", { email, password, name });
+
+  if (response.status !== 201) {
+    throw new Error(`signup failed: ${response.status} ${JSON.stringify(response.body)}`);
+  }
+
+  client.setToken(response.body.token);
+
+  const code = response.body.verificationCode;
+  if (!code) {
+    throw new Error("signup returned no verification code — is MAIL_OUTBOUND_MODE mock?");
+  }
+
+  const verified = await client.post("/v1/auth/verify", { email, code });
+  if (verified.status !== 200) {
+    throw new Error(`verify failed: ${verified.status} ${JSON.stringify(verified.body)}`);
+  }
+
+  return {
+    token: response.body.token,
+    userId: response.body.user.id,
+    workspaceId: response.body.workspaceId,
+    email,
+    password,
+  };
+}
+
+/** Signs up without verifying, for tests that exercise the gate itself. */
+export async function signUpUnverified(
+  client: ApiClient,
+  overrides: Partial<{ email: string; password: string; name: string }> = {},
+): Promise<SignedUpUser & { verificationCode: string }> {
+  counter += 1;
+  const email = overrides.email ?? `unverified${counter}-${Date.now()}@example.com`;
+  const password = overrides.password ?? "Sup3rSecret!";
+  const name = overrides.name ?? "Test Founder";
+
+  const response = await client.post<{
+    token: string;
+    workspaceId: string;
+    user: { id: string };
+    verificationCode: string;
   }>("/v1/auth/signup", { email, password, name });
 
   if (response.status !== 201) {
@@ -50,6 +101,7 @@ export async function signUp(
     workspaceId: response.body.workspaceId,
     email,
     password,
+    verificationCode: response.body.verificationCode,
   };
 }
 

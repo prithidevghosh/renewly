@@ -41,6 +41,7 @@ describe("renewal happy path", () => {
       token: string;
       workspaceId: string;
       user: { email: string };
+      verificationCode: string;
     }>("/v1/auth/signup", {
       email: "founder@northwind.test",
       password: "Sup3rSecret!",
@@ -52,6 +53,13 @@ describe("renewal happy path", () => {
     state.token = response.body.token;
     state.workspaceId = response.body.workspaceId;
     client.setToken(state.token);
+
+    // Unverified accounts reach nothing; enter the emailed code first.
+    const verified = await client.post("/v1/auth/verify", {
+      email: "founder@northwind.test",
+      code: response.body.verificationCode,
+    });
+    expect(verified.status).toBe(200);
 
     const me = await client.get<{ workspace: { name: string } }>("/v1/me");
     expect(me.body.workspace.name).toBe("Northwind Labs");

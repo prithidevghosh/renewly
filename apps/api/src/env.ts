@@ -31,6 +31,25 @@ const envSchema = z.object({
   AUTH_SECRET: z.string().min(32).default("renewly-development-secret-do-not-use-in-production"),
   AUTH_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(60 * 60 * 24 * 7),
 
+  /**
+   * Social sign-in. `mock` mints a deterministic profile from the state so the
+   * whole flow — including account linking — runs in tests and demos with no
+   * Google or Microsoft credentials.
+   */
+  OAUTH_MODE: z.enum(["mock", "live"]).default("mock"),
+  GOOGLE_CLIENT_ID: optional(z.string()),
+  GOOGLE_CLIENT_SECRET: optional(z.string()),
+  MICROSOFT_CLIENT_ID: optional(z.string()),
+  MICROSOFT_CLIENT_SECRET: optional(z.string()),
+  /** `common` accepts both work and personal Microsoft accounts. */
+  MICROSOFT_TENANT: z.string().default("common"),
+
+  /** Six-digit code lifetime, and how many guesses it survives. */
+  VERIFICATION_CODE_TTL_MINUTES: z.coerce.number().int().positive().default(15),
+  VERIFICATION_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  /** Seconds a client must wait before asking for another code. */
+  VERIFICATION_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().nonnegative().default(60),
+
   LLM_API_KEY: optional(z.string()),
   LLM_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
   LLM_MODEL: z.string().default("gpt-4o-mini"),
@@ -132,6 +151,19 @@ function parseEnv(): Env {
     }
     if (value.PRAVA_MODE !== "mock" && !value.PRAVA_SECRET_KEY) {
       throw new Error("PRAVA_SECRET_KEY is required when PRAVA_MODE is sandbox or live");
+    }
+  }
+  if (value.OAUTH_MODE === "live") {
+    // Either provider may be configured alone, but a half-configured one is a
+    // runtime 500 on a button the user can already see.
+    const google = Boolean(value.GOOGLE_CLIENT_ID) === Boolean(value.GOOGLE_CLIENT_SECRET);
+    const microsoft = Boolean(value.MICROSOFT_CLIENT_ID) === Boolean(value.MICROSOFT_CLIENT_SECRET);
+    if (!google) throw new Error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set together");
+    if (!microsoft) {
+      throw new Error("MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET must be set together");
+    }
+    if (!value.GOOGLE_CLIENT_ID && !value.MICROSOFT_CLIENT_ID) {
+      throw new Error("OAUTH_MODE=live needs at least one provider configured");
     }
   }
   if (value.LINQ_MODE === "live" && !value.LINQ_API_KEY) {

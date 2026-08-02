@@ -4,6 +4,7 @@ import { auditTypes, signUp } from "../src/test/factories.js";
 
 let harness: TestHarness;
 let client: ApiClient;
+let verificationCode: string;
 
 beforeAll(async () => {
   harness = await createHarness();
@@ -15,12 +16,14 @@ afterAll(async () => {
 });
 
 describe("auth", () => {
-  it("signs up, creates a workspace and returns a usable token", async () => {
+  it("signs up unverified, creates a workspace and returns a token", async () => {
     const response = await client.post<{
-      user: { id: string; email: string; name: string };
+      user: { id: string; email: string; name: string; emailVerified: boolean };
       workspaceId: string;
       token: string;
       expiresAt: string;
+      verificationRequired: boolean;
+      verificationCode: string | null;
     }>("/v1/auth/signup", {
       email: "Founder@Example.com",
       password: "Sup3rSecret!",
@@ -34,6 +37,35 @@ describe("auth", () => {
     expect(new Date(response.body.expiresAt).getTime()).toBeGreaterThan(Date.now());
     expect(JSON.stringify(response.body)).not.toContain("passwordHash");
     expect(JSON.stringify(response.body)).not.toContain("Sup3rSecret");
+
+    // The account exists but is not usable yet.
+    expect(response.body.verificationRequired).toBe(true);
+    expect(response.body.user.emailVerified).toBe(false);
+
+    client.setToken(response.body.token);
+    verificationCode = response.body.verificationCode!;
+    expect(verificationCode).toMatch(/^\d{6}$/);
+  });
+
+  it("emails the code and unlocks the account when it is entered", async () => {
+    const mail = harness.mailbox().at(-1);
+    expect(mail?.to).toBe("founder@example.com");
+    expect(mail?.text).toContain(verificationCode);
+
+    // Blocked until verified, and with a code the client can act on.
+    const blocked = await client.get("/v1/subscriptions");
+    expect(blocked.status).toBe(403);
+    expect(expectErrorCode(blocked.body)).toBe("EMAIL_NOT_VERIFIED");
+
+    const verified = await client.post<{ user: { emailVerified: boolean } }>("/v1/auth/verify", {
+      email: "founder@example.com",
+      code: verificationCode,
+    });
+    expect(verified.status).toBe(200);
+    expect(verified.body.user.emailVerified).toBe(true);
+
+    // The token the client already held now works — no re-login.
+    expect((await client.get("/v1/subscriptions")).status).toBe(200);
   });
 
   it("rejects a duplicate email", async () => {

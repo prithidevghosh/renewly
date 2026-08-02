@@ -44,6 +44,8 @@ describe("message to payment, end to end", () => {
     const response = await client.post<{
       token: string;
       workspaceId: string;
+      verificationRequired: boolean;
+      verificationCode: string;
     }>("/v1/auth/signup", {
       email: "founder@northwind.test",
       password: "Sup3rSecret!",
@@ -54,6 +56,15 @@ describe("message to payment, end to end", () => {
     expect(response.status).toBe(201);
     client.setToken(response.body.token);
     state.workspaceId = response.body.workspaceId;
+
+    // A new account is unverified and reaches nothing until the emailed code is
+    // entered, so the journey does what a real user does before going on.
+    expect(response.body.verificationRequired).toBe(true);
+    const verified = await client.post("/v1/auth/verify", {
+      email: "founder@northwind.test",
+      code: response.body.verificationCode,
+    });
+    expect(verified.status).toBe(200);
   });
 
   it("2. connects the simulator channel", async () => {

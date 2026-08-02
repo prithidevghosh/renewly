@@ -79,10 +79,28 @@ export interface ApiResponse<T = unknown> {
   headers: Headers;
 }
 
+let clientSeq = 0;
+
 export class ApiClient {
   private token: string | null = null;
+  /**
+   * Every client presents a distinct source address.
+   *
+   * The credential routes are rate limited per IP, which is correct in
+   * production and would otherwise make one test file's signups throttle the
+   * next test's. Distinct addresses model what actually happens — different
+   * people on different connections — and keep the limiter itself under test
+   * rather than turned off.
+   */
+  private readonly ip: string;
 
-  constructor(private readonly app: Hono<AppEnv>) {}
+  constructor(
+    private readonly app: Hono<AppEnv>,
+    options: { ip?: string } = {},
+  ) {
+    clientSeq += 1;
+    this.ip = options.ip ?? `10.0.${Math.floor(clientSeq / 250) % 250}.${clientSeq % 250}`;
+  }
 
   setToken(token: string | null): void {
     this.token = token;
@@ -104,6 +122,7 @@ export class ApiClient {
     } = {},
   ): Promise<ApiResponse<T>> {
     const headers: Record<string, string> = { ...(options.headers ?? {}) };
+    headers["x-forwarded-for"] ??= this.ip;
     const token = options.token !== undefined ? options.token : this.token;
     if (token) headers.authorization = `Bearer ${token}`;
 
