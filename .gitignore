@@ -21,6 +21,8 @@ sample
 
 # Working notes on product and design decisions. Local only.
 memory
+BUILD_PLAN.md
+DEMO_EMAILS.md
 
 # Agent sessions and their worktrees — each one is a full checkout copy.
 .claude
